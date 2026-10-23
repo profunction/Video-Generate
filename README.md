@@ -28,3 +28,5 @@ Windows API Key 使用 Electron safeStorage，经 DPAPI 加密，存放于应用
 本版提供分镜输入到视频合并的一键流水线。尚未接入剧本生成、Ollama、ComfyUI、本地图片上传、配音、字幕或背景音乐。可将其他工具产生的分镜图片托管后使用，不要求安装这些工具。
 
 `npm test` 使用模拟 Wan 接口检查预算、任务恢复相关请求行为和重试；安装 FFmpeg 时还会实际生成和合并测试视频。CI 在 Windows Server runner 上运行测试并构建安装包，这不等同于 Windows 11 实机验收。发布前应在 Windows 11 实机验证安装、DPAPI、包含中文及空格的路径、FFmpeg 和获批后的真实 API 流程。此项目开发过程中未发起付费 API 请求。
+
+Windows 验收步骤见 [验收清单](docs/WINDOWS-ACCEPTANCE.md)。CI 还会运行 `npm run test:desktop`，检查真实 Electron 的系统加密、中文路径、页面加载及安全桥接；FFmpeg 在 CI 中显式安装。
