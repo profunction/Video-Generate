@@ -12,7 +12,24 @@ ComfyUI 可选；也可以直接选择本地图片或填写 HTTPS 图片网址�
 
 开发：Node.js 22+，运行 `npm ci`、`npm start`。Windows 打包：`npm run dist:win`。
 
-## 首次配置（只需一次）
+## 推荐：一键环境配置（0.3 版）
+
+安装本程序后，直接点击顶部 **一键下载、安装并连接**，选择 CPU 通用模式或兼容的 NVIDIA 模式，并确认下载。程序会：
+
+1. 自动下载并校验固定版本的 Ollama、ComfyUI Windows portable、FFmpeg 和解压工具。
+2. 自动下载 Qwen2.5 1.5B 剧本模型与 SD1.5 图片模型，创建默认工作流。
+3. 自动启动仅监听本机的两个服务（端口 11435 / 18188），保存全部连接与工具路径。
+4. 以后点击生成时自动启动服务，退出应用时停止本次启动的服务。
+
+**不用分别安装 Ollama、ComfyUI、FFmpeg，也不用手动导入工作流。** 首次联网下载预计约 10 GB，需要至少 25 GB 空间，建议 16 GB 内存。CPU 模式不要求 NVIDIA，速度取决于硬件。下载中断后再次点击配置可以继续已保留的下载；文件 SHA-256 校验通过后才解压或执行。暂不支持自动配置 Windows ARM。
+
+环境配置完成后，只需在应用中填写并保存 **阿里云 Key、区域、模型、当前价格和预算**，再输入故事，点击“一键生成完整短剧”。云端付费调用仍需用户确认；下载模型不会调用 Wan。
+
+工具保存在应用数据目录下的 `tools`，日志为 `local-services.log`。环境设置会备份原有 settings / workflow，然后替换本地服务地址和默认工作流；现有 Key 与项目保留。程序会占用本机 11435 / 18188 端口。无法连接下载源时需解决电脑网络问题后重试。中文系统配音仍需 Windows 安装可用中文 SAPI 语音，可关闭配音保留字幕。首次大型下载、真实模型和完整 Windows 11 环境配置尚未实机验收，自动测试使用小型模拟下载。
+
+下载源和许可证： [Ollama / MIT](https://github.com/ollama/ollama)、[Qwen2.5 / Apache-2.0](https://huggingface.co/Qwen/Qwen2.5-1.5B-Instruct)、[ComfyUI / GPL-3.0](https://github.com/Comfy-Org/ComfyUI)、[SD1.5 / CreativeML OpenRAIL-M](https://huggingface.co/stable-diffusion-v1-5/stable-diffusion-v1-5)、[FFmpeg GPL 构建](https://github.com/GyanD/codexffmpeg)、[7-Zip](https://www.7-zip.org/license.txt)。可执行文件和模型在用户电脑上首次下载，不包含在约 100 MB 的主安装包中。
+
+## 高级：使用自己已安装的工具（替代自动配置）
 
 1. 安装 [Ollama for Windows](https://ollama.com/download/windows)，在终端运行 `ollama pull qwen2.5:7b`。模型名称可改成你已有的模型。默认地址 `http://127.0.0.1:11434`。
 2. 可选：安装 [ComfyUI](https://docs.comfy.org/installation/desktop/windows) 与适合电脑的生图模型，启动服务。默认连接地址 `http://127.0.0.1:8188`，以实际启动日志为准。硬件不适合本地生图时，跳过 ComfyUI，使用已有图片。
@@ -21,7 +38,7 @@ ComfyUI 可选；也可以直接选择本地图片或填写 HTTPS 图片网址�
 4. 安装 [FFmpeg](https://www.gyan.dev/ffmpeg/builds/)，把 FFmpeg 和 FFprobe 加入 PATH，或在应用填写两个 `.exe` 的完整路径。
 5. 在应用填写阿里云百炼 / DashScope API Key、相匹配的北京或新加坡区域及该区域可用的 Wan 模型。默认 `wan2.2-i2v-flash`，固定请求 5 秒、720P。按官方当前报价填写每秒价格和项目预算，币种相同。价格默认 0，未填写前无法付费生成。
 6. 按需开启“Windows 配音”。系统须安装相应语言的传统 SAPI 桌面语音；Windows 设置中的部分自然语音不支持 System.Speech。语音名称可留空使用默认语音，或填写已安装的 SAPI 名称。每镜头旁白须短于 5 秒，过长时程序会提示编辑，不会静默裁切。
-7. 点击“保存设置”，再点击“检测 Ollama / ComfyUI”。应用连接这些已安装的服务；**安装包不包含 Ollama、ComfyUI、模型、FFmpeg**，不会自动下载大型模型。
+7. 点击“保存设置”，再点击“检测 Ollama / ComfyUI”。应用连接本地服务；**主安装包不包含 Ollama、ComfyUI、模型、FFmpeg**；顶部一键环境配置会在首次使用时自动下载。
 
 ## 一键生成
 
@@ -56,4 +73,4 @@ Windows Key 使用 Electron safeStorage / DPAPI 加密，保存在 Electron user
 
 Windows CI 安装 FFmpeg，执行测试、Electron 系统加密 / 中文路径 / 界面隔离 smoke，并构建 NSIS 安装包。Windows Server CI 不等于 Windows 11 实机验证。尚未在真实 Ollama / ComfyUI 模型、Windows 11 和真实付费 Wan 上完成验收；请按 [验收清单](docs/WINDOWS-ACCEPTANCE.md) 验证。开发过程中未提交付费请求。
 
-当前没有背景音乐混音、自动安装模型或角色训练功能。
+当前没有背景音乐混音或角色训练功能。

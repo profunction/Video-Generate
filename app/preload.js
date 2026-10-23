@@ -1,5 +1,6 @@
 const { contextBridge, ipcRenderer } = require("electron");
 contextBridge.exposeInMainWorld("studio", {
+  installEnvironment: (mode) => ipcRenderer.invoke("setup:install", mode),
   generateStory: (idea, count) =>
     ipcRenderer.invoke("story:generate", idea, count),
   checkLocal: () => ipcRenderer.invoke("local:check"),

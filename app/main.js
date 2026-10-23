@@ -18,6 +18,15 @@ const {
   prepareWorkflow,
 } = require("./local-ai");
 const { finish } = require("./finish");
+const { Runtime, workflow: defaultWorkflow } = require("./runtime");
+let runtime;
+async function ensureManaged() {
+  const state = await read(path.join(root(), "setup.json"), null);
+  if (state?.installed) {
+    if (!state.ready) throw Error("请先完成一键环境配置");
+    await runtime.start();
+  }
+}
 let win,
   busy = false;
 const defaults = {
@@ -60,6 +69,7 @@ function projectPath(id) {
 }
 app.whenReady().then(async () => {
   await fs.mkdir(root(), { recursive: true });
+  runtime = new Runtime(root(), emit);
   win = new BrowserWindow({
     width: 1180,
     height: 850,
@@ -81,11 +91,53 @@ app.whenReady().then(async () => {
   win.webContents.on("will-navigate", (e) => e.preventDefault());
   ipcMain.handle("settings:get", async () => ({
     ...(await settings()),
+    setupReady: !!(await read(path.join(root(), "setup.json"), null))?.ready,
     hasKey: await fs.access(path.join(root(), "key.bin")).then(
       () => true,
       () => false,
     ),
   }));
+  ipcMain.handle("setup:install", async (_, mode) => {
+    if (busy) throw Error("请等待当前任务结束");
+    busy = true;
+    try {
+      const result = await dialog.showMessageBox(win, {
+        type: "info",
+        buttons: ["取消", "下载并配置"],
+        defaultId: 0,
+        cancelId: 0,
+        message: "一键配置完整短剧环境",
+        detail:
+          "将下载约 10 GB 的工具和模型，首次需要至少 25 GB 空闲空间，建议 16 GB 内存。自动下载 Ollama、ComfyUI、FFmpeg、7-Zip、Qwen2.5 3B 和 SD1.5，并配置本地连接与默认工作流。CPU 模式无需 NVIDIA，但生图会较慢。会备份并替换现有的本地连接配置及工作流，不更改 API Key 和项目。下载与使用须遵守这些项目的许可证（见 README）。不会发起付费 Wan 请求。",
+      });
+      if (result.response !== 1) return { canceled: true };
+      const config = await runtime.install(mode);
+      for (const name of ["settings.json", "workflow.json"]) {
+        const original = path.join(root(), name);
+        if (
+          await fs.access(original).then(
+            () => true,
+            () => false,
+          )
+        )
+          await fs.copyFile(
+            original,
+            original + ".before-setup-" + Date.now() + ".bak",
+          );
+      }
+      await save(path.join(root(), "settings.json"), {
+        ...(await settings()),
+        ...config,
+      });
+      await save(path.join(root(), "workflow.json"), defaultWorkflow());
+      emit(
+        "环境已连接！填写并保存 Wan Key、区域、价格和预算后，即可输入故事一键生成。",
+      );
+      return { ready: true };
+    } finally {
+      busy = false;
+    }
+  });
   ipcMain.handle("settings:save", async (_, value) => {
     if (busy) throw Error("Wait until generation finishes");
     const config = {};
@@ -148,11 +200,15 @@ app.whenReady().then(async () => {
     await save(projectPath(p.id), p);
     return p;
   });
-  ipcMain.handle("local:check", async () => checkServices(await settings()));
+  ipcMain.handle("local:check", async () => {
+    await ensureManaged();
+    return checkServices(await settings());
+  });
   ipcMain.handle("story:generate", async (_, idea, count) => {
     if (busy) throw Error("Another operation is running");
     busy = true;
     try {
+      await ensureManaged();
       emit("Ollama is generating the screenplay…");
       return await storyboard(idea, Number(count), await settings());
     } finally {
@@ -232,6 +288,7 @@ app.whenReady().then(async () => {
       const file = projectPath(id),
         p = await read(file, null);
       if (!p) throw Error("Project not found");
+      await ensureManaged();
       const cfg = await settings();
       const estimate = validate(p, cfg);
       await run(cfg.ffmpeg, ["-version"]);
@@ -347,3 +404,5 @@ app.on("before-quit", (e) => {
 app.on("window-all-closed", () => {
   if (!busy) app.quit();
 });
+
+app.on("will-quit", () => runtime?.stop());

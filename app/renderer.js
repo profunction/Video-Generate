@@ -224,6 +224,33 @@ action(async () => {
   const cfg = await window.studio.settings();
   for (const f of fields) $(f).value = String(cfg[f] ?? "");
   $("keyStatus").textContent = cfg.hasKey ? "Key 已加密保存" : "";
+  $("setupStatus").textContent = cfg.setupReady
+    ? "已配置，下次生成时自动启动服务"
+    : "首次使用请点击一键配置";
   scene();
   await refresh();
 });
+
+$("setup").onclick = () =>
+  action(async () => {
+    if (active) throw Error("请等待当前任务结束");
+    active = true;
+    $("setup").disabled = true;
+    try {
+      status("准备配置完整环境…");
+      const result = await window.studio.installEnvironment(
+        $("setupMode").value,
+      );
+      if (result.canceled) {
+        status("已取消环境下载");
+        return;
+      }
+      const cfg = await window.studio.settings();
+      for (const f of fields) $(f).value = String(cfg[f] ?? "");
+      $("setupStatus").textContent = "已配置并连接";
+    } finally {
+      active = false;
+      $("setup").disabled = false;
+      await refresh();
+    }
+  });

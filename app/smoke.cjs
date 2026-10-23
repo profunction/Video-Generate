@@ -27,7 +27,17 @@ app.whenReady().then(async () => {
       ),
       "smoke-test-placeholder",
     );
+    let setupReady = false;
+    ipcMain.handle("setup:install", (_, mode) => {
+      assert.equal(mode, "cpu");
+      setupReady = true;
+      return { ready: true };
+    });
     ipcMain.handle("settings:get", () => ({
+      setupReady,
+      ollamaModel: "qwen2.5:1.5b",
+      ollamaUrl: "http://127.0.0.1:11435",
+      comfyUrl: "http://127.0.0.1:18188",
       region: "china",
       model: "wan2.2-i2v-flash",
       pricePerSecond: 0,
@@ -80,6 +90,11 @@ app.whenReady().then(async () => {
     })()`);
     assert.equal(created.scenes.length, 4);
     assert.equal(runs, 1);
+    await win.webContents.executeJavaScript(`(async()=>{
+      document.getElementById('setup').click();
+      await new Promise((resolve,reject)=>{const started=Date.now();const timer=setInterval(()=>{if(document.getElementById('setupStatus').textContent==='已配置并连接'){clearInterval(timer);resolve();}else if(Date.now()-started>10000){clearInterval(timer);reject(new Error(document.getElementById('status').textContent));}},50);});
+    })()`);
+    assert.equal(setupReady, true);
     console.log(
       "Electron smoke passed: secure storage, Unicode paths, renderer and sandbox bridge.",
     );

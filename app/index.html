@@ -21,7 +21,26 @@
     </header>
     <main>
       <section>
-        <h2>01 / 云端与工具设置</h2>
+        <h2>01 / 一键连接完整环境</h2>
+        <p>
+          不用分别下载工具或手动配置工作流。首次点击下方按钮，程序会下载并连接
+          Ollama、ComfyUI、默认模型和 FFmpeg。约 10 GB 下载，至少预留 25 GB
+          磁盘，建议 16 GB 内存；后续启动服务自动完成。
+        </p>
+        <label
+          >电脑硬件<select id="setupMode">
+            <option value="cpu">通用 CPU 模式（无需 NVIDIA，速度较慢）</option>
+            <option value="nvidia">
+              NVIDIA 加速模式（需要兼容显卡和驱动）
+            </option>
+          </select></label
+        >
+        <button id="setup">一键下载、安装并连接</button
+        ><span id="setupStatus"></span>
+        <p>
+          完成后只需保存阿里云
+          Key、区域和价格预算，然后到下方输入故事，点击“一键生成完整短剧”。已有环境仍可使用下方高级设置。
+        </p>
         <p>无需 NVIDIA 显卡。API Key 使用系统加密保存；Windows 使用 DPAPI。</p>
         <div class="grid">
           <label
@@ -92,7 +111,7 @@
             与适合硬件的模型并启动服务；在 ComfyUI 中导出 API 格式的工作流
             JSON，把正向提示词替换为 {{PROMPT}}，保留负向提示词，确保包含
             SaveImage 节点，然后在此导入。无需 ComfyUI
-            时，直接选择本地图片或填写图片网址。应用连接这些服务，不包含模型和服务安装程序。
+            时，直接选择本地图片或填写图片网址。也可使用顶部一键环境配置，自动完成下载、启动和工作流设置。
           </p>
         </details>
       </section>
@@ -115,7 +134,7 @@
         <p>
           一键流程：Ollama 剧本 → ComfyUI 分镜图片 → 上传阿里云 → Wan 视频 →
           配音 / 字幕 /
-          MP4。需先保存设置并导入可用工作流；付费调用仍需确认。也可手动填写或选择本地图片。字幕为
+          MP4。先完成一键环境配置或手动连接工具，再保存云端设置；付费调用仍需确认。也可手动填写或选择本地图片。字幕为
           MP4 可选字幕轨，同时导出 SRT。每镜头旁白需控制在 5 秒以内。
         </p>
         <label>项目名称<input id="name" placeholder="我的第一部短剧" /></label>
