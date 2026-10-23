@@ -223,3 +223,58 @@ test("mock connected flow: story → ComfyUI → local image upload → Wan → 
     await fs.rm(folder, { recursive: true, force: true });
   }
 });
+
+test("Windows installed SAPI voice renders audio into the exported drama", async (t) => {
+  if (process.platform !== "win32") {
+    t.skip("Requires Windows SAPI");
+    return;
+  }
+  let voices;
+  try {
+    voices = await run("powershell.exe", [
+      "-NoProfile",
+      "-NonInteractive",
+      "-Command",
+      "Add-Type -AssemblyName System.Speech; $s = New-Object System.Speech.Synthesis.SpeechSynthesizer; @($s.GetInstalledVoices() | Where-Object { $_.Enabled }).Count; $s.Dispose()",
+    ]);
+  } catch {
+    t.skip("Windows SAPI unavailable on this runner");
+    return;
+  }
+  if (Number(voices.trim()) < 1) {
+    t.skip("No SAPI desktop voice installed");
+    return;
+  }
+  const folder = await fs.mkdtemp(path.join(os.tmpdir(), "speech studio "));
+  try {
+    await run("ffmpeg", [
+      "-y",
+      "-f",
+      "lavfi",
+      "-i",
+      "color=c=blue:s=320x240:d=5",
+      "-c:v",
+      "libx264",
+      path.join(folder, "final.mp4"),
+    ]);
+    const output = await finish(
+      { scenes: [{ narration: "Hello world" }] },
+      folder,
+      { ...cfg, narration: true },
+    );
+    const probe = JSON.parse(
+      await run("ffprobe", [
+        "-v",
+        "error",
+        "-show_streams",
+        "-of",
+        "json",
+        output,
+      ]),
+    );
+    assert.ok(probe.streams.some((s) => s.codec_type === "audio"));
+    assert.ok(probe.streams.some((s) => s.codec_type === "subtitle"));
+  } finally {
+    await fs.rm(folder, { recursive: true, force: true });
+  }
+});

@@ -27,12 +27,14 @@ async function finish(project, folder, cfg) {
     for (let i = 0; i < project.scenes.length; i++) {
       const text = path.join(folder, `voice-${i}.txt`),
         wav = path.join(folder, `voice-${i}.wav`),
-        fixed = path.join(folder, `voice-${i}.m4a`);
+        fixed = path.join(folder, `voice-${i}-normalized.wav`);
       if (project.scenes[i].narration?.trim()) {
         await fs.writeFile(text, project.scenes[i].narration);
         await run("powershell.exe", [
           "-NoProfile",
           "-NonInteractive",
+          "-ExecutionPolicy",
+          "Bypass",
           "-File",
           path.join(
             __dirname.replace("app.asar", "app.asar.unpacked"),
@@ -93,7 +95,7 @@ async function finish(project, folder, cfg) {
         .map((p) => `file '${p.replace(/\\/g, "/").replace(/'/g, "'\\''")}'`)
         .join("\n"),
     );
-    const narration = path.join(folder, "narration.m4a");
+    const narration = path.join(folder, "narration.wav");
     await run(cfg.ffmpeg, [
       "-y",
       "-f",
