@@ -10,6 +10,7 @@ const emit=(message)=>win?.webContents.send('progress',message);
 function projectPath(id){if(!/^[a-f0-9-]{36}$/.test(id))throw Error('Invalid project');return path.join(root(),'projects',id,'project.json');}
 app.whenReady().then(()=>{
  win=new BrowserWindow({width:1180,height:850,webPreferences:{preload:path.join(__dirname,'preload.js'),contextIsolation:true,nodeIntegration:false,sandbox:true}});
+ win.on('close',e=>{if(busy){e.preventDefault();emit('生成任务尚未结束，请保持窗口开启。');}});
  win.loadFile(path.join(__dirname,'index.html')); win.webContents.setWindowOpenHandler(()=>({action:'deny'})); win.webContents.on('will-navigate',e=>e.preventDefault());
  ipcMain.handle('settings:get',async()=>({...await settings(),hasKey:await fs.access(path.join(root(),'key.bin')).then(()=>true,()=>false)}));
  ipcMain.handle('settings:save',async(_,value)=>{
