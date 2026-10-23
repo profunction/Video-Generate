@@ -1,32 +1,59 @@
 # Video Generate · AI Short Drama Studio
 
-Windows 10/11 x64 桌面应用：公开分镜图片 + 镜头提示词 → 阿里云 Wan → 下载片段 → FFmpeg → 无声 MP4。无需 NVIDIA GPU、Docker 或自建服务器。
+Windows 10/11 x64 Electron 桌面应用，现已接通：
 
-## 开发与安装
+**故事创意 → Ollama 剧本与分镜 → ComfyUI 图片 → 阿里云 Wan 视频 → 下载 → FFmpeg → 系统配音 / 字幕 → MP4**
 
-安装 Node.js 22+，运行 `npm ci`，然后 `npm start`。Windows 上执行 `npm run dist:win` 创建 NSIS `.exe` 安装程序。GitHub Actions 的 **Windows installer** 工作流也会构建安装包，可在成功运行页面的 Artifacts 中下载。安装包尚未代码签名，Windows 可能提示未知发布者。
+ComfyUI 可选；也可以直接选择本地图片或填写 HTTPS 图片网址。云端 Wan 不需要 NVIDIA GPU。本地模型的速度和显存要求取决于所选模型。程序不要求 Docker 或自建云服务器。
 
-需自行安装 FFmpeg（包含 FFprobe），添加到 PATH，或在应用设置中填写两个可执行文件的完整路径。不需要在最终用户电脑安装 Node.js。应用以软件编码合并视频。
+## 下载与安装
 
-## 使用
+在仓库的 **Actions → Windows installer → 成功运行 → Artifacts** 下载 `Video-Generate-Windows-x64`，解压并运行 `.exe`。安装包未代码签名。应用可安装到已有版本之上；请先备份项目，默认保留旧配置与数据。
 
-1. 在设置中输入阿里云 DashScope API Key，选择与 Key 相匹配的中国北京或国际新加坡区域。默认模型 `wan2.2-i2v-flash`；请核对账号区域实际支持的模型。当前请求固定为 5 秒、720P。
-2. 按阿里云当前模型报价填写**每秒价格**和**每项目预算**，两者采用同一币种。价格默认 0，会阻止付费生成，直到用户主动设置。
-3. 添加分镜：每个镜头填写提示词和 Wan 可公开读取的 HTTPS 图片 URL。先保存项目，然后点击“生成 / 恢复”。提交新任务前需要在原生对话框中明确批准。
-4. 应用依次查询任务、下载片段、统一为 1280×720 / 24fps，合并为项目文件夹中的 `final.mp4`。目前输出不包含音频、字幕或配音。
+开发：Node.js 22+，运行 `npm ci`、`npm start`。Windows 打包：`npm run dist:win`。
 
-## 数据与费用
+## 首次配置（只需一次）
 
-Windows API Key 使用 Electron safeStorage，经 DPAPI 加密，存放于应用数据目录。项目保存在 `%APPDATA%/Video Generate/projects` 或 Electron 实际分配的 userData 目录；“打开项目文件夹”可直接访问。卸载默认保留项目。请在迁移前备份整个项目目录。图片 URL、提示词和任务 ID 会保存在项目 JSON 中。
+1. 安装 [Ollama for Windows](https://ollama.com/download/windows)，在终端运行 `ollama pull qwen2.5:7b`。模型名称可改成你已有的模型。默认地址 `http://127.0.0.1:11434`。
+2. 可选：安装 [ComfyUI](https://docs.comfy.org/installation/desktop/windows) 与适合电脑的生图模型，启动服务。默认连接地址 `http://127.0.0.1:8188`，以实际启动日志为准。硬件不适合本地生图时，跳过 ComfyUI，使用已有图片。
+3. 在 ComfyUI 中先确认工作流能成功出图，再**导出 API 格式 JSON**（不是普通界面工作流）。将正向文本提示词中的故事内容替换为 `{{PROMPT}}`，保留负向提示词，确保包含 `SaveImage` 节点。在本应用点击“导入 ComfyUI API 工作流”。只导入可信的工作流，模型和自定义节点须事先安装。
+   - 仓库提供 [SD1.5 示例工作流](examples/comfy-sd15-api.json)。先将 `ckpt_name` 改成 ComfyUI `models/checkpoints` 下已安装的 SD1.5 文件名，再导入。SDXL / Flux 等模型需要各自兼容的工作流。
+4. 安装 [FFmpeg](https://www.gyan.dev/ffmpeg/builds/)，把 FFmpeg 和 FFprobe 加入 PATH，或在应用填写两个 `.exe` 的完整路径。
+5. 在应用填写阿里云百炼 / DashScope API Key、相匹配的北京或新加坡区域及该区域可用的 Wan 模型。默认 `wan2.2-i2v-flash`，固定请求 5 秒、720P。按官方当前报价填写每秒价格和项目预算，币种相同。价格默认 0，未填写前无法付费生成。
+6. 按需开启“Windows 配音”。系统须安装相应语言的传统 SAPI 桌面语音；Windows 设置中的部分自然语音不支持 System.Speech。语音名称可留空使用默认语音，或填写已安装的 SAPI 名称。每镜头旁白须短于 5 秒，过长时程序会提示编辑，不会静默裁切。
+7. 点击“保存设置”，再点击“检测 Ollama / ComfyUI”。应用连接这些已安装的服务；**安装包不包含 Ollama、ComfyUI、模型、FFmpeg**，不会自动下载大型模型。
 
-每次请求**发出之前**持久化预留费用和提交状态；请求成功后保存任务 ID。重启后恢复查询已有 ID，不自动重新提交。网络中断造成提交结果不明时，项目会锁住该镜头以防重复收费；请在阿里云控制台检查任务，找到 ID 后关闭应用、备份并修改项目 JSON：设置该镜头 `taskId`、`region` 和 `model`，并设置 `uncertain: false`。不要在未核实前创建替代项目。预留费用保守累计，不会因任务失败自动退款。预算为本应用基于用户输入价格计算的限制，不能替代阿里云账号额度或防止其他客户端消费。
+## 一键生成
 
-轮询对 429 / 5xx 使用退避重试；付费提交从不自动重试。下载失败可恢复并重新获取下载 URL。轮询约 1 小时后超时，之后可继续恢复。任务失败需先在控制台排查。生成过程中保持应用开启；关机后可重新启动恢复。
+输入故事创意和镜头数量，点击“一键生成完整短剧”。应用自动调用 Ollama、保存项目，然后连接 ComfyUI 逐镜头生图并上传，接着调用 Wan、下载视频、合并并导出字幕与可选配音。**每次提交新的付费 Wan 任务前必须在原生对话框明确批准**；取消则不会上传图片或提交新视频任务。Ollama 剧本生成属于本地操作，不需要 Wan Key。
 
-## 当前范围与验证
+也可以点击“生成剧本并编辑”，检查人物、提示词和旁白后保存项目，再“生成 / 恢复”。手动路径可使用图片网址或“选择本地图片”，本地图片复制到项目内保存；空图片配合生图提示词会使用 ComfyUI。
 
-本版提供分镜输入到视频合并的一键流水线。尚未接入剧本生成、Ollama、ComfyUI、本地图片上传、配音、字幕或背景音乐。可将其他工具产生的分镜图片托管后使用，不要求安装这些工具。
+“编辑分镜 / 旁白”支持修改已保存项目；已提交 Wan 的镜头锁定视觉提示词和图片，避免已有任务与编辑内容不一致，但仍可修改旁白并重新导出。未提交镜头修改生图提示词后，需清空原有本地图片才能重新生图。要改变镜头数量，请新建项目。
 
-`npm test` 使用模拟 Wan 接口检查预算、任务恢复相关请求行为和重试；安装 FFmpeg 时还会实际生成和合并测试视频。CI 在 Windows Server runner 上运行测试并构建安装包，这不等同于 Windows 11 实机验收。发布前应在 Windows 11 实机验证安装、DPAPI、包含中文及空格的路径、FFmpeg 和获批后的真实 API 流程。此项目开发过程中未发起付费 API 请求。
+## 导出与恢复
 
-Windows 验收步骤见 [验收清单](docs/WINDOWS-ACCEPTANCE.md)。CI 还会运行 `npm run test:desktop`，检查真实 Electron 的系统加密、中文路径、页面加载及安全桥接；FFmpeg 在 CI 中显式安装。
+- `final.mp4`：1280×720 / 24fps，无声合并版本。
+- `drama.mp4`：有旁白文本时生成，包含可选的配音和可切换字幕轨；播放器中开启字幕即可显示。
+- `subtitles.srt`：每镜头 5 秒的独立字幕文件。
+- `image-*.png`、`clip-*.mp4`：中间素材，保存在项目文件夹中。
+
+中断后点击“生成 / 恢复”：ComfyUI 保存 prompt ID 后继续查结果；Wan 保存 task ID 后继续轮询，不重新提交。ComfyUI 服务需保留任务历史；丢失历史时请编辑尚未提交的镜头以重建图片。任务期间保持窗口开启。图像提示词重复描述人物以改善一致性，但不能保证人物完全一致；参考图与角色 LoRA 等可在工作流中自行配置。
+
+本地和 ComfyUI 图片经用户付费确认后自动上传到 [DashScope 临时文件空间](https://help.aliyun.com/zh/model-studio/get-temporary-file-url)，不需要另配 OSS Key，有效期 48 小时，仅供个人低频使用；阿里云不建议用于生产高并发。应用提交前重新上传，避免复用过期 URL。生产部署请改用长期 OSS 存储。图片与提示词会发送给阿里云。HTTP 下载、API / 模型可用性受账号、网络和区域影响。
+
+## 数据与费用保护
+
+Windows Key 使用 Electron safeStorage / DPAPI 加密，保存在 Electron userData 目录。项目保存在其 `projects` 子目录，通过“打开项目文件夹”访问；卸载默认不删除。旧版项目无须迁移。
+
+付费提交不自动重试；轮询对 429 / 5xx 退避重试。每次付费请求发出前写入预留费用和提交状态，任务成功响应后记录 ID。若请求结果不明，镜头标记为 `uncertain` 并停止，防止重复收费。此时先到阿里云控制台核实，找到 ID 后关闭应用、备份 JSON，再给镜头设置 `taskId`、`region`、`model` 与 `uncertain: false`，然后恢复；不要未经核实创建替代项目。
+
+预留费用保守累计，失败不自动退款；预算由用户填写价格估算，不能代替云账号额度，也不能限制其他客户端消费。下载失败可以恢复。轮询超时后可再次恢复。
+
+## 验证范围
+
+`npm test` 覆盖预算、付费请求不重复提交、轮询、结构化剧本验证、工作流参数替换、字幕时间轴，以及模拟 Ollama → ComfyUI → 图片上传 → Wan 后实际用 FFmpeg 生成 MP4 和字幕轨的连通测试。模拟服务不会产生云费用。
+
+Windows CI 安装 FFmpeg，执行测试、Electron 系统加密 / 中文路径 / 界面隔离 smoke，并构建 NSIS 安装包。Windows Server CI 不等于 Windows 11 实机验证。尚未在真实 Ollama / ComfyUI 模型、Windows 11 和真实付费 Wan 上完成验收；请按 [验收清单](docs/WINDOWS-ACCEPTANCE.md) 验证。开发过程中未提交付费请求。
+
+当前没有背景音乐混音、自动安装模型或角色训练功能。

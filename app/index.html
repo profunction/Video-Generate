@@ -1,9 +1,140 @@
-<!doctype html><html lang="zh-CN"><head><meta charset="utf-8"><meta http-equiv="Content-Security-Policy" content="default-src 'self'; style-src 'self'; script-src 'self'; connect-src 'none'; img-src 'self'"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Video Generate</title><link rel="stylesheet" href="style.css"></head><body>
-<header><span class="logo">▶</span><div><h1>Video Generate</h1><p>AI SHORT DRAMA STUDIO · WINDOWS</p></div><span class="badge">WAN CLOUD</span></header>
-<main><section><h2>01 / 云端与工具设置</h2><p>无需 NVIDIA 显卡。API Key 使用系统加密保存；Windows 使用 DPAPI。</p><div class="grid">
-<label>API Key<input id="key" type="password" placeholder="输入后加密保存；留空保留现有 Key" autocomplete="off"></label>
-<label>API 区域<select id="region"><option value="china">中国 · 北京</option><option value="international">国际 · 新加坡</option></select></label>
-<label>Wan 模型<input id="model" value="wan2.2-i2v-flash"></label><label>每秒价格（按官方当前报价填写）<input id="pricePerSecond" type="number" min="0" step="0.001"></label>
-<label>每个项目预算（与价格同币种）<input id="budget" type="number" min="0" step="0.01"></label><label>FFmpeg 路径<input id="ffmpeg" placeholder="ffmpeg 或完整 exe 路径"></label><label>FFprobe 路径<input id="ffprobe" placeholder="ffprobe 或完整 exe 路径"></label></div><button id="save">保存设置</button><span id="keyStatus"></span></section>
-<section><h2>02 / 创建分镜项目</h2><p>每个镜头生成 5 秒、720P 视频。图片须为 Wan 可访问的公开 HTTPS URL。请勿在 URL 中放置私人凭据。</p><label>项目名称<input id="name" placeholder="我的第一部短剧"></label><div id="scenes"></div><button class="secondary" id="add">＋ 添加镜头</button><button id="create">保存项目</button></section>
-<section><h2>03 / 生成与导出</h2><p>一键依次提交分镜、下载片段并合并 MP4。提交付费请求前会弹出确认。恢复会使用已有任务 ID；最终导出为无声视频。</p><div id="projects"></div><output id="status" role="status" aria-live="polite">准备就绪</output></section></main><script src="renderer.js"></script></body></html>
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <meta
+      http-equiv="Content-Security-Policy"
+      content="default-src 'self'; style-src 'self'; script-src 'self'; connect-src 'none'; img-src 'self'"
+    />
+    <meta name="viewport" content="width=device-width,initial-scale=1" />
+    <title>Video Generate</title>
+    <link rel="stylesheet" href="style.css" />
+  </head>
+  <body>
+    <header>
+      <span class="logo">▶</span>
+      <div>
+        <h1>Video Generate</h1>
+        <p>AI SHORT DRAMA STUDIO · WINDOWS</p>
+      </div>
+      <span class="badge">WAN CLOUD</span>
+    </header>
+    <main>
+      <section>
+        <h2>01 / 云端与工具设置</h2>
+        <p>无需 NVIDIA 显卡。API Key 使用系统加密保存；Windows 使用 DPAPI。</p>
+        <div class="grid">
+          <label
+            >API Key<input
+              id="key"
+              type="password"
+              placeholder="输入后加密保存；留空保留现有 Key"
+              autocomplete="off"
+          /></label>
+          <label
+            >API 区域<select id="region">
+              <option value="china">中国 · 北京</option>
+              <option value="international">国际 · 新加坡</option>
+            </select></label
+          >
+          <label>Wan 模型<input id="model" value="wan2.2-i2v-flash" /></label
+          ><label
+            >每秒价格（按官方当前报价填写）<input
+              id="pricePerSecond"
+              type="number"
+              min="0"
+              step="0.001"
+          /></label>
+          <label
+            >每个项目预算（与价格同币种）<input
+              id="budget"
+              type="number"
+              min="0"
+              step="0.01" /></label
+          ><label
+            >FFmpeg 路径<input
+              id="ffmpeg"
+              placeholder="ffmpeg 或完整 exe 路径" /></label
+          ><label
+            >FFprobe 路径<input
+              id="ffprobe"
+              placeholder="ffprobe 或完整 exe 路径" /></label
+          ><label
+            >Ollama 地址<input
+              id="ollamaUrl"
+              value="http://127.0.0.1:11434" /></label
+          ><label
+            >Ollama 模型<input id="ollamaModel" value="qwen2.5:7b" /></label
+          ><label
+            >ComfyUI 地址<input
+              id="comfyUrl"
+              value="http://127.0.0.1:8188" /></label
+          ><label
+            >Windows 配音<select id="narration">
+              <option value="false">关闭（仍导出字幕）</option>
+              <option value="true">开启系统语音</option>
+            </select></label
+          ><label
+            >系统语音名称（留空使用默认）<input
+              id="voice"
+              placeholder="需安装支持故事语言的 Windows 系统语音"
+          /></label>
+        </div>
+        <button id="save">保存设置</button><span id="keyStatus"></span
+        ><button class="secondary" id="checkLocal">检测 Ollama / ComfyUI</button
+        ><button class="secondary" id="workflow">
+          导入 ComfyUI API 工作流
+        </button>
+        <details>
+          <summary>首次配置本地 AI</summary>
+          <p>
+            先安装 Ollama，然后在终端运行 ollama pull qwen2.5:7b。安装 ComfyUI
+            与适合硬件的模型并启动服务；在 ComfyUI 中导出 API 格式的工作流
+            JSON，把正向提示词替换为 {{PROMPT}}，保留负向提示词，确保包含
+            SaveImage 节点，然后在此导入。无需 ComfyUI
+            时，直接选择本地图片或填写图片网址。应用连接这些服务，不包含模型和服务安装程序。
+          </p>
+        </details>
+      </section>
+      <section>
+        <h2>02 / 故事与分镜</h2>
+        <label
+          >故事创意<textarea
+            id="idea"
+            placeholder="例如：一位钟表匠收到来自未来的求救信……"
+          ></textarea></label
+        ><label
+          >镜头数量（每镜头 5 秒）<input
+            id="count"
+            type="number"
+            min="1"
+            max="20"
+            value="4" /></label
+        ><button id="write">生成剧本并编辑</button
+        ><button id="automatic">一键生成完整短剧</button>
+        <p>
+          一键流程：Ollama 剧本 → ComfyUI 分镜图片 → 上传阿里云 → Wan 视频 →
+          配音 / 字幕 /
+          MP4。需先保存设置并导入可用工作流；付费调用仍需确认。也可手动填写或选择本地图片。字幕为
+          MP4 可选字幕轨，同时导出 SRT。每镜头旁白需控制在 5 秒以内。
+        </p>
+        <label>项目名称<input id="name" placeholder="我的第一部短剧" /></label>
+        <div id="scenes"></div>
+        <button class="secondary" id="add">＋ 添加镜头</button
+        ><button id="create">保存项目</button
+        ><button class="secondary" id="newProject">新建空白项目</button>
+      </section>
+      <section>
+        <h2>03 / 生成与导出</h2>
+        <p>
+          一键依次提交分镜、下载片段并合并
+          MP4。提交付费请求前会弹出确认。恢复会使用已有任务 ID；支持字幕和可选的
+          Windows 系统配音。
+        </p>
+        <div id="projects"></div>
+        <output id="status" role="status" aria-live="polite">准备就绪</output>
+      </section>
+    </main>
+    <script src="renderer.js"></script>
+  </body>
+</html>
