@@ -1,0 +1,9 @@
+<!doctype html><html lang="zh-CN"><head><meta charset="utf-8"><meta http-equiv="Content-Security-Policy" content="default-src 'self'; style-src 'self'; script-src 'self'; connect-src 'none'; img-src 'self'"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Video Generate</title><link rel="stylesheet" href="style.css"></head><body>
+<header><span class="logo">▶</span><div><h1>Video Generate</h1><p>AI SHORT DRAMA STUDIO · WINDOWS</p></div><span class="badge">WAN CLOUD</span></header>
+<main><section><h2>01 / 云端与工具设置</h2><p>无需 NVIDIA 显卡。API Key 使用系统加密保存；Windows 使用 DPAPI。</p><div class="grid">
+<label>API Key<input id="key" type="password" placeholder="输入后加密保存；留空保留现有 Key" autocomplete="off"></label>
+<label>API 区域<select id="region"><option value="china">中国 · 北京</option><option value="international">国际 · 新加坡</option></select></label>
+<label>Wan 模型<input id="model" value="wan2.2-i2v-flash"></label><label>每秒价格（按官方当前报价填写）<input id="pricePerSecond" type="number" min="0" step="0.001"></label>
+<label>每个项目预算（与价格同币种）<input id="budget" type="number" min="0" step="0.01"></label><label>FFmpeg 路径<input id="ffmpeg" placeholder="ffmpeg 或完整 exe 路径"></label><label>FFprobe 路径<input id="ffprobe" placeholder="ffprobe 或完整 exe 路径"></label></div><button id="save">保存设置</button><span id="keyStatus"></span></section>
+<section><h2>02 / 创建分镜项目</h2><p>每个镜头生成 5 秒、720P 视频。图片须为 Wan 可访问的公开 HTTPS URL。请勿在 URL 中放置私人凭据。</p><label>项目名称<input id="name" placeholder="我的第一部短剧"></label><div id="scenes"></div><button class="secondary" id="add">＋ 添加镜头</button><button id="create">保存项目</button></section>
+<section><h2>03 / 生成与导出</h2><p>一键依次提交分镜、下载片段并合并 MP4。提交付费请求前会弹出确认。恢复会使用已有任务 ID；最终导出为无声视频。</p><div id="projects"></div><output id="status" role="status" aria-live="polite">准备就绪</output></section></main><script src="renderer.js"></script></body></html>
