@@ -1,6 +1,7 @@
 const {
   app,
   BrowserWindow,
+  WebContentsView,
   ipcMain,
   dialog,
   safeStorage,
@@ -19,6 +20,9 @@ const {
 } = require("./local-ai");
 const { finish } = require("./finish");
 const { Runtime, workflow: defaultWorkflow } = require("./runtime");
+const { FlowEditor } = require("./flow-editor");
+const { localBase } = require("./local-ai");
+let flowEditor;
 let runtime;
 async function ensureManaged() {
   const state = await read(path.join(root(), "setup.json"), null);
@@ -72,6 +76,8 @@ app.whenReady().then(async () => {
   runtime = new Runtime(root(), emit);
   win = new BrowserWindow({
     width: 1180,
+    minWidth: 960,
+    minHeight: 650,
     height: 850,
     webPreferences: {
       preload: path.join(__dirname, "preload.js"),
@@ -80,6 +86,7 @@ app.whenReady().then(async () => {
       sandbox: true,
     },
   });
+  flowEditor = new FlowEditor(win, WebContentsView);
   win.on("close", (e) => {
     if (busy) {
       e.preventDefault();
@@ -89,6 +96,58 @@ app.whenReady().then(async () => {
   win.loadFile(path.join(__dirname, "index.html"));
   win.webContents.setWindowOpenHandler(() => ({ action: "deny" }));
   win.webContents.on("will-navigate", (e) => e.preventDefault());
+  ipcMain.handle("editor:show", async () => {
+    await ensureManaged();
+    const config = await settings();
+    const base = localBase(config.comfyUrl);
+    let response;
+    try {
+      response = await fetch(base + "/system_stats", {
+        signal: AbortSignal.timeout(15000),
+      });
+    } catch {
+      throw Error(
+        "ComfyUI 尚未启动，请先运行一键环境配置，或保存正确的 ComfyUI 地址。",
+      );
+    }
+    if (!response.ok) throw Error("ComfyUI 连接失败，请检查本地服务。");
+    await flowEditor.show(base);
+    return true;
+  });
+  ipcMain.handle("editor:hide", () => {
+    flowEditor.hide();
+    return true;
+  });
+  ipcMain.handle("editor:load", async () => {
+    const graph = await read(
+      path.join(root(), "workflow.json"),
+      defaultWorkflow(),
+    );
+    await flowEditor.loadPrompt(graph);
+    return true;
+  });
+  ipcMain.handle("editor:use", async () => {
+    if (busy) throw Error("请等当前任务结束再修改自动流程");
+    const graph = await flowEditor.currentPrompt();
+    try {
+      prepareWorkflow(graph, "check");
+    } catch (e) {
+      throw Error(
+        "当前 Flow 可以直接运行；若要用于自动短剧，请在正向提示词中加入 {{PROMPT}}，并保留 SaveImage 节点。" +
+          e.message,
+      );
+    }
+    const file = path.join(root(), "workflow.json");
+    if (
+      await fs.access(file).then(
+        () => true,
+        () => false,
+      )
+    )
+      await fs.copyFile(file, file + ".before-flow-" + Date.now() + ".bak");
+    await save(file, graph);
+    return true;
+  });
   ipcMain.handle("settings:get", async () => ({
     ...(await settings()),
     setupReady: !!(await read(path.join(root(), "setup.json"), null))?.ready,

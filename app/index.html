@@ -11,6 +11,17 @@
     <link rel="stylesheet" href="style.css" />
   </head>
   <body>
+    <nav class="appnav" aria-label="工作区">
+      <button id="workbenchTab" class="is-active">短剧工作台</button>
+      <button id="flowTab" class="secondary">Flow 节点编辑器</button>
+      <button id="loadFlow" class="secondary" disabled>
+        载入程序生图 Flow
+      </button>
+      <button id="useFlow" class="secondary" disabled>用于自动短剧生图</button>
+      <output id="flowStatus" aria-live="polite"
+        >Flow 编辑器支持拖入 JSON、修改节点和连线、运行及保存工作流。</output
+      >
+    </nav>
     <header>
       <span class="logo">▶</span>
       <div>
@@ -102,7 +113,7 @@
         <button id="save">保存设置</button><span id="keyStatus"></span
         ><button class="secondary" id="checkLocal">检测 Ollama / ComfyUI</button
         ><button class="secondary" id="workflow">
-          导入 ComfyUI API 工作流
+          自动短剧：导入 API 工作流
         </button>
         <details>
           <summary>首次配置本地 AI</summary>

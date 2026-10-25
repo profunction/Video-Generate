@@ -16,6 +16,8 @@ let active = false,
   editing = null;
 function status(message) {
   $("status").textContent = message;
+  $("flowStatus").textContent = message;
+  $("flowStatus").title = message;
 }
 async function action(fn) {
   try {
@@ -253,4 +255,43 @@ $("setup").onclick = () =>
       $("setup").disabled = false;
       await refresh();
     }
+  });
+
+function editorMode(on) {
+  document.body.classList.toggle("flow-mode", on);
+  $("flowTab").classList.toggle("is-active", on);
+  $("workbenchTab").classList.toggle("is-active", !on);
+  $("loadFlow").disabled = !on;
+  $("useFlow").disabled = !on;
+}
+$("flowTab").onclick = () =>
+  action(async () => {
+    $("flowTab").disabled = true;
+    status("正在启动 ComfyUI 节点编辑器…");
+    try {
+      await window.studio.showFlow();
+      editorMode(true);
+      status(
+        "拖入工作流 JSON，修改节点与连线后，点击 ComfyUI 的运行按钮。可通过其菜单保存工作流。",
+      );
+    } finally {
+      $("flowTab").disabled = false;
+    }
+  });
+$("workbenchTab").onclick = () =>
+  action(async () => {
+    await window.studio.hideFlow();
+    editorMode(false);
+  });
+$("loadFlow").onclick = () =>
+  action(async () => {
+    await window.studio.loadDefaultFlow();
+    status(
+      "已载入程序生图 Flow。{{PROMPT}} 用于自动剧本；手动测试时可替换成具体画面描述。",
+    );
+  });
+$("useFlow").onclick = () =>
+  action(async () => {
+    await window.studio.useCurrentFlow();
+    status("当前 Flow 已保存为自动短剧的生图流程。返回短剧工作台即可使用。");
   });

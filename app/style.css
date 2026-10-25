@@ -136,3 +136,43 @@ output {
     grid-template-columns: 1fr;
   }
 }
+
+.appnav {
+  height: 104px;
+  box-sizing: border-box;
+  position: sticky;
+  top: 0;
+  z-index: 10;
+  background: #101a29;
+  border-bottom: 1px solid #35415a;
+  display: flex;
+  flex-wrap: wrap;
+  align-content: center;
+  gap: 8px;
+  padding: 10px 24px;
+}
+.appnav button {
+  margin: 0;
+  padding: 9px 14px;
+  background: #28374d;
+  color: #dbe7f7;
+}
+.appnav button.is-active {
+  background: #a6f3ce;
+  color: #10291f;
+}
+.appnav output {
+  flex-basis: 100%;
+  margin: 0;
+  padding: 0;
+  background: transparent;
+  color: #b2c4db;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  font-size: 12px;
+}
+.flow-mode > header,
+.flow-mode > main {
+  display: none;
+}

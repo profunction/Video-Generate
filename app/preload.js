@@ -1,5 +1,9 @@
 const { contextBridge, ipcRenderer } = require("electron");
 contextBridge.exposeInMainWorld("studio", {
+  showFlow: () => ipcRenderer.invoke("editor:show"),
+  hideFlow: () => ipcRenderer.invoke("editor:hide"),
+  loadDefaultFlow: () => ipcRenderer.invoke("editor:load"),
+  useCurrentFlow: () => ipcRenderer.invoke("editor:use"),
   installEnvironment: (mode) => ipcRenderer.invoke("setup:install", mode),
   generateStory: (idea, count) =>
     ipcRenderer.invoke("story:generate", idea, count),
