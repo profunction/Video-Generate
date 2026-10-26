@@ -141,6 +141,9 @@ else
           return route === "/clips"
             ? await flowJobs.clips(input)
             : await flowJobs.combine(input);
+        } catch(error) {
+          emit("Flow 任务失败："+error.message);
+          throw error;
         } finally {
           busy = false;
         }
