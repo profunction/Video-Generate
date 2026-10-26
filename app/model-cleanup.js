@@ -161,12 +161,21 @@ async function cleanupCandidate(
   comfyDir,
   candidate,
   referenceObjects,
-  { trashItem, catalog = LEGACY_MODELS } = {},
+  { trashItem, catalog = LEGACY_MODELS, refreshReferences } = {},
 ) {
   if (typeof trashItem !== "function")
     throw Error("Operating-system recycle-bin support is required");
   if (!candidate || typeof candidate.path !== "string")
     throw Error("Invalid model cleanup candidate");
+  if (
+    refreshReferences !== undefined &&
+    typeof refreshReferences !== "function"
+  )
+    throw Error("Invalid live workflow reference refresh callback");
+  // Capture before awaiting the long hash, including when callers reuse/mutate arrays.
+  const referenceSnapshot = refreshReferences
+    ? JSON.stringify(referenceObjects)
+    : null;
   const planned = await planCleanup(comfyDir, referenceObjects, { catalog });
   const eligible = planned.find(
     (item) =>
@@ -177,8 +186,19 @@ async function cleanupCandidate(
   );
   if (!eligible)
     throw Error("Model is referenced, changed or not eligible for cleanup");
-  // Recheck references after the potentially lengthy multi-GB hash operation.
-  const documents = await references(comfyDir, referenceObjects);
+  // Re-fetch the live canvas/queue after the potentially lengthy multi-GB hash.
+  // Any change is treated conservatively, even if it references another model.
+  let activeReferences = referenceObjects;
+  if (refreshReferences) {
+    activeReferences = await refreshReferences();
+    if (
+      !Array.isArray(activeReferences) ||
+      JSON.stringify(activeReferences) !== referenceSnapshot
+    )
+      throw Error("Live workflow references changed; cleanup stopped");
+  }
+  // Saved JSON is scanned after the live check, followed only by local metadata checks.
+  const documents = await references(comfyDir, activeReferences);
   if (
     documents.some((document) =>
       containsReference(document, new Set([modelName(eligible.name)])),

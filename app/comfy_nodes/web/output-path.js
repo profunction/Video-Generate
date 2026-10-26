@@ -15,6 +15,7 @@ app.registerExtension({
           ["STRING", { multiline: true }],
           app,
         ).widget;
+      widget.options = { ...widget.options, serialize: false };
       if (widget.inputEl) widget.inputEl.readOnly = true;
       widget.value = Array.isArray(message.text) ? message.text.join("\n") : "";
       this.setSize(this.computeSize());

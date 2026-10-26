@@ -160,3 +160,108 @@ test("new workflow references and escaped candidate paths are rejected before re
   );
   assert.equal(called, false);
 });
+
+test("live reference refresh prevents recycling when the old model becomes referenced", async (t) => {
+  const { root } = await fixture(t);
+  const initial = [{ nodes: [] }];
+  const [candidate] = await planCleanup(root, initial, { catalog });
+  let recycled = false;
+  let refreshed = false;
+  await assert.rejects(
+    () =>
+      cleanupCandidate(root, candidate, initial, {
+        catalog,
+        refreshReferences: async () => {
+          refreshed = true;
+          return [{ nodes: [{ widgets_values: [name] }] }];
+        },
+        trashItem: async () => {
+          recycled = true;
+        },
+      }),
+    /Live workflow references changed/,
+  );
+  assert.equal(refreshed, true);
+  assert.equal(recycled, false);
+});
+
+test("live reference refresh conservatively rejects any changed canvas", async (t) => {
+  const { root } = await fixture(t);
+  const initial = [{ nodes: [] }];
+  const [candidate] = await planCleanup(root, initial, { catalog });
+  let recycled = false;
+  await assert.rejects(
+    () =>
+      cleanupCandidate(root, candidate, initial, {
+        catalog,
+        refreshReferences: async () => [
+          { nodes: [{ title: "Changed canvas without legacy model" }] },
+        ],
+        trashItem: async () => {
+          recycled = true;
+        },
+      }),
+    /Live workflow references changed/,
+  );
+  assert.equal(recycled, false);
+});
+
+test("stable live references permit recycling after a fresh saved-workflow scan", async (t) => {
+  const { root, file } = await fixture(t);
+  const initial = [
+    { nodes: [{ widgets_values: ["current-photo-model.safetensors"] }] },
+  ];
+  const [candidate] = await planCleanup(root, initial, { catalog });
+  let recycled = null;
+  const result = await cleanupCandidate(root, candidate, initial, {
+    catalog,
+    refreshReferences: async () => JSON.parse(JSON.stringify(initial)),
+    trashItem: async (target) => {
+      recycled = target;
+    },
+  });
+  assert.equal(recycled, file);
+  assert.equal(result.recycled, true);
+});
+
+test("a saved workflow or model edit during the live refresh still prevents recycling", async (t) => {
+  const { root, file } = await fixture(t);
+  const initial = [{ nodes: [] }];
+  const [candidate] = await planCleanup(root, initial, { catalog });
+  let recycled = false;
+  await assert.rejects(
+    () =>
+      cleanupCandidate(root, candidate, initial, {
+        catalog,
+        refreshReferences: async () => {
+          const folder = path.join(root, "user");
+          await fs.mkdir(folder);
+          await fs.writeFile(
+            path.join(folder, "just-saved.json"),
+            JSON.stringify({ model: name }),
+          );
+          return initial;
+        },
+        trashItem: async () => {
+          recycled = true;
+        },
+      }),
+    /became referenced/,
+  );
+  await fs.rm(path.join(root, "user"), { recursive: true });
+  await assert.rejects(
+    () =>
+      cleanupCandidate(root, candidate, initial, {
+        catalog,
+        refreshReferences: async () => {
+          await fs.writeFile(file, "modified after hash");
+          return initial;
+        },
+        trashItem: async () => {
+          recycled = true;
+        },
+      }),
+    /changed after verification/,
+  );
+  assert.equal(recycled, false);
+});
