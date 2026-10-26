@@ -4,7 +4,7 @@ const path = require("node:path");
 const crypto = require("node:crypto");
 const { spawn } = require("node:child_process");
 const { run } = require("./engine");
-const {PHOTO,photoWorkflow,ensurePhotoAssets}=require("./photo-model");
+const { PHOTO, photoWorkflow, ensurePhotoAssets } = require("./photo-model");
 const SOURCES = {
   ollama: {
     url: "https://github.com/ollama/ollama/releases/download/v0.40.9/ollama-windows-amd64.zip",
@@ -114,7 +114,9 @@ function managedSettings(root) {
     ),
   };
 }
-function workflow(){return photoWorkflow();}
+function workflow() {
+  return photoWorkflow();
+}
 
 class Runtime {
   constructor(root, report = () => {}) {
@@ -169,7 +171,31 @@ class Runtime {
       this.starting = null;
     }
   }
+  async installFlowNodes() {
+    const comfy = path.join(
+      this.root,
+      "tools",
+      "comfy",
+      "ComfyUI_windows_portable",
+      "ComfyUI",
+    );
+    if (!(await exists(path.join(comfy, "main.py")))) return;
+    const target = path.join(comfy, "custom_nodes", "video_generate_bridge");
+    await fs.mkdir(target, { recursive: true });
+    await fs.writeFile(
+      path.join(target, "__init__.py"),
+      await fs.readFile(path.join(__dirname, "comfy_nodes", "__init__.py")),
+    );
+    await fs.mkdir(path.join(target, "web"), { recursive: true });
+    await fs.writeFile(
+      path.join(target, "web", "output-path.js"),
+      await fs.readFile(
+        path.join(__dirname, "comfy_nodes", "web", "output-path.js"),
+      ),
+    );
+  }
   async startInternal() {
+    await this.installFlowNodes();
     const setupFile = path.join(this.root, "setup.json");
     if (!(await exists(setupFile))) return;
     const state = JSON.parse(await fs.readFile(setupFile, "utf8"));
@@ -203,6 +229,9 @@ class Runtime {
           "18188",
           ...(state.mode === "nvidia" ? [] : ["--cpu"]),
         ],
+        {
+          VIDEO_GENERATE_BRIDGE_FILE: path.join(this.root, "flow-bridge.json"),
+        },
       );
       await this.wait(cfg.comfyUrl + "/system_stats", child);
     }
@@ -266,7 +295,10 @@ class Runtime {
       await fs.writeFile(marker, SOURCES[name].sha);
       await fs.rm(archive, { force: true });
     }
-    await ensurePhotoAssets(path.join(tools,"comfy","ComfyUI_windows_portable","ComfyUI"),{download:asset,report:this.report});
+    await ensurePhotoAssets(
+      path.join(tools, "comfy", "ComfyUI_windows_portable", "ComfyUI"),
+      { download: asset, report: this.report },
+    );
     // Installed records only mean files exist; ready is written after services and model pull succeed.
     await fs.writeFile(
       path.join(this.root, "setup.json"),

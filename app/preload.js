@@ -1,5 +1,7 @@
 const { contextBridge, ipcRenderer } = require("electron");
 contextBridge.exposeInMainWorld("studio", {
+  showVideoFlow: () => ipcRenderer.invoke("editor:video"),
+  cleanupModels: () => ipcRenderer.invoke("models:cleanup"),
   showFlow: () => ipcRenderer.invoke("editor:show"),
   hideFlow: () => ipcRenderer.invoke("editor:hide"),
   loadDefaultFlow: () => ipcRenderer.invoke("editor:load"),

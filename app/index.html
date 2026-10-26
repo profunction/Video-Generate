@@ -14,6 +14,7 @@
     <nav class="appnav" aria-label="工作区">
       <button id="workbenchTab" class="is-active">短剧工作台</button>
       <button id="flowTab" class="secondary">Flow 节点编辑器</button>
+      <button id="videoFlowTab" class="secondary">完整视频 Flow</button>
       <button id="loadFlow" class="secondary" disabled>
         载入程序生图 Flow
       </button>
@@ -47,7 +48,10 @@
           </select></label
         >
         <button id="setup">一键下载、安装并连接</button
-        ><span id="setupStatus"></span>
+        ><span id="setupStatus"></span
+        ><button id="cleanupModels" class="secondary">
+          清理未使用的旧模型
+        </button>
         <p>
           完成后只需保存阿里云
           Key、区域和价格预算，然后到下方输入故事，点击“一键生成完整短剧”。已有环境仍可使用下方高级设置。

@@ -83,12 +83,18 @@ class FlowEditor {
       );
     }
   }
+  async snapshot() {
+    if (!this.view) throw Error("请先打开 Flow 编辑器，以检查当前画布模型引用");
+    return this.view.webContents.executeJavaScript(
+      `(async()=>{const {app}=await import('/scripts/app.js');return await app.graphToPrompt();})()`,
+    );
+  }
   async loadPrompt(graph) {
     if (!this.view || !this.visible) throw Error("请先打开 Flow 节点编辑器");
     const data = JSON.stringify(JSON.stringify(graph));
     try {
       await this.view.webContents.executeJavaScript(
-        `(async()=>{const {app}=await import('/scripts/app.js');if(!app?.loadApiJson)throw Error('unsupported');await app.loadApiJson(JSON.parse(${data}),'Video Generate flow');})()`,
+        `(async()=>{const {app}=await import('/scripts/app.js');if(!app?.loadApiJson)throw Error('unsupported');if(app.refreshComboInNodes)await app.refreshComboInNodes();await app.loadApiJson(JSON.parse(${data}),'Video Generate flow');})()`,
       );
     } catch {
       throw Error(

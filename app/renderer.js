@@ -282,6 +282,7 @@ $("workbenchTab").onclick = () =>
   action(async () => {
     await window.studio.hideFlow();
     editorMode(false);
+    await refresh();
   });
 $("loadFlow").onclick = () =>
   action(async () => {
@@ -294,4 +295,34 @@ $("useFlow").onclick = () =>
   action(async () => {
     await window.studio.useCurrentFlow();
     status("当前 Flow 已保存为自动短剧的生图流程。返回短剧工作台即可使用。");
+  });
+
+$("videoFlowTab").onclick = () =>
+  action(async () => {
+    if (active) throw Error("请等待当前任务结束");
+    $("videoFlowTab").disabled = true;
+    try {
+      status("正在载入 图片 → Wan 5秒片段 → 合并MP4…");
+      await window.studio.showVideoFlow();
+      editorMode(true);
+      status(
+        "完整视频Flow：修改图片提示词、batch_size与镜头动作后Run。Wan前会弹出费用确认；任务编号job_key相同可恢复，换图片/提示词请更换编号。",
+      );
+    } finally {
+      $("videoFlowTab").disabled = false;
+    }
+  });
+$("cleanupModels").onclick = () =>
+  action(async () => {
+    if (active) throw Error("请等待任务结束");
+    active = true;
+    $("cleanupModels").disabled = true;
+    try {
+      status("检查旧模型引用与文件完整性，请稍候…");
+      const result = await window.studio.cleanupModels();
+      status(result.message);
+    } finally {
+      active = false;
+      $("cleanupModels").disabled = false;
+    }
   });

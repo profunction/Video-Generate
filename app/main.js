@@ -21,6 +21,9 @@ const {
 const { finish } = require("./finish");
 const { Runtime, workflow: defaultWorkflow } = require("./runtime");
 const { FlowEditor } = require("./flow-editor");
+const { FlowJobs, FlowGateway, videoWorkflow } = require("./flow-gateway");
+const { planCleanup, cleanupCandidate } = require("./model-cleanup");
+let gateway, flowJobs;
 const { localBase } = require("./local-ai");
 let flowEditor;
 let runtime;
@@ -87,6 +90,53 @@ app.whenReady().then(async () => {
     },
   });
   flowEditor = new FlowEditor(win, WebContentsView);
+  flowJobs = new FlowJobs({
+    root: root(),
+    settings,
+    getKey: async () =>
+      safeStorage.decryptString(
+        await fs.readFile(path.join(root(), "key.bin")),
+      ),
+    approve: async ({ count, estimate, project, cfg }) => {
+      win.show();
+      win.focus();
+      const result = await dialog.showMessageBox(win, {
+        type: "warning",
+        buttons: ["取消", "批准付费生成"],
+        defaultId: 0,
+        cancelId: 0,
+        message: `Wan：${count} 张图片 → 每张 5 秒视频`,
+        detail: `预计新增费用 ${estimate.toFixed(2)}，已预留 ${Number(project.reserved).toFixed(2)}，项目预算 ${cfg.budget}。币种与填写的每秒价格一致。图片会上传阿里云临时存储。以实际账单为准。`,
+      });
+      return result.response === 1;
+    },
+    report: emit,
+    normalizeImage: async (bytes) => {
+      if (
+        bytes.length < 24 ||
+        bytes.readUInt32BE(16) * bytes.readUInt32BE(20) > 16000000
+      )
+        throw Error("PNG 分辨率过大");
+      const image = nativeImage.createFromBuffer(bytes);
+      if (image.isEmpty()) throw Error("无法读取 PNG 图片");
+      return image.toPNG();
+    },
+  });
+  gateway = new FlowGateway({
+    root: root(),
+    handle: async (route, input) => {
+      if (busy) throw Error("程序有其他任务正在执行，请稍后恢复");
+      busy = true;
+      try {
+        return route === "/clips"
+          ? await flowJobs.clips(input)
+          : await flowJobs.combine(input);
+      } finally {
+        busy = false;
+      }
+    },
+  });
+  await gateway.start();
   win.on("close", (e) => {
     if (busy) {
       e.preventDefault();
@@ -114,6 +164,104 @@ app.whenReady().then(async () => {
     await flowEditor.show(base);
     return true;
   });
+  ipcMain.handle("editor:video", async () => {
+    if (busy) throw Error("请等待当前任务完成");
+    await ensureManaged();
+    const cfg = await settings(),
+      base = localBase(cfg.comfyUrl);
+    let info;
+    try {
+      const response = await fetch(
+        base + "/object_info/VG_WanFiveSecondClips",
+        { signal: AbortSignal.timeout(15000) },
+      );
+      info = await response.json();
+    } catch {
+      throw Error("ComfyUI 未连接，请先完成环境配置");
+    }
+    if (!info.VG_WanFiveSecondClips)
+      throw Error(
+        "视频节点尚未加载。请完全关闭旧版程序与旧 ComfyUI，再打开新版并启动环境。",
+      );
+    if (flowEditor.view) {
+      await save(
+        path.join(root(), "flow-backups", Date.now() + ".json"),
+        await flowEditor.snapshot(),
+      );
+    }
+    await flowEditor.show(base);
+    await flowEditor.loadPrompt(videoWorkflow());
+    return true;
+  });
+  ipcMain.handle("models:cleanup", async () => {
+    if (busy) throw Error("请等待生成任务完成再清理模型");
+    busy = true;
+    try {
+      const comfy = path.join(
+        root(),
+        "tools",
+        "comfy",
+        "ComfyUI_windows_portable",
+        "ComfyUI",
+      );
+      const collect = async () => {
+        const cfg = await settings();
+        const response = await fetch(localBase(cfg.comfyUrl) + "/queue", {
+          signal: AbortSignal.timeout(10000),
+        });
+        if (!response.ok) throw Error("无法检查 ComfyUI 队列，已停止清理");
+        const queue = await response.json();
+        if (
+          !Array.isArray(queue.queue_running) ||
+          !Array.isArray(queue.queue_pending) ||
+          queue.queue_running.length ||
+          queue.queue_pending.length
+        )
+          throw Error("ComfyUI 仍有任务或队列不可确认，请稍后再清理");
+        return [
+          await read(path.join(root(), "workflow.json"), {}),
+          await flowEditor.snapshot(),
+        ];
+      };
+      const candidates = await planCleanup(comfy, await collect());
+      if (!candidates.length)
+        return {
+          removed: [],
+          message:
+            "没有可安全清理的旧基础模型：可能仍被工作流引用、已被移除，或文件不是程序原版。其他模型不会删除。",
+        };
+      const result = await dialog.showMessageBox(win, {
+        type: "question",
+        buttons: ["保留", "移到回收站"],
+        defaultId: 0,
+        cancelId: 0,
+        message: "清理未引用的旧基础模型",
+        detail:
+          candidates
+            .map(
+              (c) => c.name + " · " + (c.bytes / 1024 ** 3).toFixed(2) + " GB",
+            )
+            .join("\n") +
+          "\n已检查当前画布、程序工作流和 ComfyUI 保存的 JSON。若其他未保存的标签页仍需旧模型，请先取消并保存这些工作流。旧备份恢复时可能需要从回收站还原模型。写实模型、VAE、自行添加的模型和项目均保留。",
+      });
+      if (result.response !== 1)
+        return { removed: [], message: "已保留旧模型" };
+      const removed = [];
+      for (const candidate of candidates)
+        removed.push(
+          await cleanupCandidate(comfy, candidate, await collect(), {
+            trashItem: (file) => shell.trashItem(file),
+          }),
+        );
+      return {
+        removed,
+        message:
+          "旧基础模型已移到回收站，可恢复。确认不再需要后可自行清空回收站以释放空间。",
+      };
+    } finally {
+      busy = false;
+    }
+  });
   ipcMain.handle("editor:hide", () => {
     flowEditor.hide();
     return true;
@@ -130,6 +278,10 @@ app.whenReady().then(async () => {
     if (busy) throw Error("请等当前任务结束再修改自动流程");
     const graph = await flowEditor.currentPrompt();
     try {
+      if (
+        Object.values(graph).some((n) => String(n.class_type).startsWith("VG_"))
+      )
+        throw Error("完整视频 Flow 请直接在画布运行，不能保存为生图子流程。");
       prepareWorkflow(graph, "check");
     } catch (e) {
       throw Error(
@@ -347,7 +499,6 @@ app.whenReady().then(async () => {
       const file = projectPath(id),
         p = await read(file, null);
       if (!p) throw Error("Project not found");
-      await ensureManaged();
       const cfg = await settings();
       const estimate = validate(p, cfg);
       await run(cfg.ffmpeg, ["-version"]);
@@ -355,6 +506,7 @@ app.whenReady().then(async () => {
       const needsComfy = p.scenes.some(
         (s) => !s.taskId && !s.clip && !s.localImage && !s.image,
       );
+      if (needsComfy) await ensureManaged();
       const workflow = needsComfy
         ? await read(path.join(root(), "workflow.json"), null)
         : null;
@@ -464,4 +616,7 @@ app.on("window-all-closed", () => {
   if (!busy) app.quit();
 });
 
-app.on("will-quit", () => runtime?.stop());
+app.on("will-quit", () => {
+  gateway?.stop();
+  runtime?.stop();
+});

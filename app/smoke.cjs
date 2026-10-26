@@ -12,6 +12,7 @@ const os = require("node:os");
 const path = require("node:path");
 const http = require("node:http");
 const { FlowEditor, TOOLBAR_HEIGHT } = require("./flow-editor");
+const { videoWorkflow } = require("./flow-gateway");
 app.whenReady().then(async () => {
   let folder, flow, server, savedFlow;
   try {
@@ -103,6 +104,15 @@ app.whenReady().then(async () => {
       await flow.show("http://127.0.0.1:" + server.address().port);
       return true;
     });
+    ipcMain.handle("editor:video", async () => {
+      await flow.show("http://127.0.0.1:" + server.address().port);
+      await flow.loadPrompt(videoWorkflow("smoke-video"));
+      return true;
+    });
+    ipcMain.handle("models:cleanup", () => ({
+      removed: [],
+      message: "没有可安全清理的旧基础模型",
+    }));
     ipcMain.handle("editor:hide", () => {
       flow.hide();
       return true;
@@ -186,6 +196,21 @@ app.whenReady().then(async () => {
     win.setContentSize(1060, 780);
     flow.resize();
     assert.equal(originalView.getBounds().height, 780 - TOOLBAR_HEIGHT);
+    await clickAndWait(
+      "videoFlowTab",
+      "document.getElementById('flowStatus').textContent.startsWith('完整视频Flow')",
+    );
+    const full = await flow.currentPrompt();
+    assert.equal(full["9"].class_type, "VG_WanFiveSecondClips");
+    assert.equal(full["10"].class_type, "VG_MergeClips");
+    await clickAndWait(
+      "workbenchTab",
+      "!document.body.classList.contains('flow-mode')",
+    );
+    await clickAndWait(
+      "cleanupModels",
+      "document.getElementById('status').textContent.startsWith('没有可安全清理')",
+    );
     flow.destroy();
     server.closeAllConnections();
     await new Promise((resolve) => server.close(resolve));
