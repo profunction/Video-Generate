@@ -12,7 +12,39 @@ ComfyUI 可选；也可以直接选择本地图片或填写 HTTPS 图片网址�
 
 开发：Node.js 22+，运行 `npm ci`、`npm start`。Windows 打包：`npm run dist:win`。
 
-## 首次配置（只需一次）
+## Flow 节点编辑器（0.4 版）
+
+程序顶部新增 **Flow 节点编辑器** 标签，将本机 ComfyUI 的完整前端嵌入桌面工作区。可以把普通工作流 JSON 拖到画布，看到节点与连线，修改节点、连线和参数，通过 ComfyUI 的运行按钮出图，并用其菜单保存工作流；无需先转换成 API JSON，也不要求占位符才能在画布运行。
+
+1. 完成一键环境配置，或保存已运行的本机 ComfyUI 地址。
+2. 点击“Flow 节点编辑器”。程序会启动已配置的托管服务，然后打开编辑画布。
+3. 拖入你自己的工作流 JSON。也可以点击“载入程序生图 Flow”，把程序当前配置的 API 图转换到画布；该按钮会替换当前画布内容，使用前先保存自己的修改。
+4. 修改提示词、模型和连线，在 ComfyUI 中运行和保存。默认生图图仅使用本机 CPU / 所选 GPU，不会自动调用 Wan。第三方 Flow 依赖的额外模型和自定义节点仍需安装；含云端节点的第三方 Flow 可能自行收费，请了解所导入的内容。
+5. 在“短剧工作台”和“Flow 节点编辑器”之间切换会保留当前画布。
+6. 要把正在编辑的生图图用于“故事 → 图片 → 视频”自动流程，在正向提示词保留 `{{PROMPT}}`，保留 `SaveImage`，再点击“用于自动短剧生图”。程序会备份原工作流后保存当前 API 图。Wan 视频仍在短剧工作台按预算和确认流程提交。
+
+节点画布是真实 ComfyUI 前端，不是另写的简化编辑器。编辑器独立沙箱运行，没有桌面程序 API Key 或 Node.js 桥接。只有当前本机 ComfyUI 地址可以在该视图导航。自定义前端若不支持 `/scripts/app.js` 的 `graphToPrompt` / `loadApiJson`，仍可在其界面拖入、编辑和运行；与自动短剧同步时需要通过菜单导出 API JSON，再从工作台导入。
+
+Windows 桌面 smoke 使用轻量模拟前端验证嵌入视图、JSON 拖放事件、API 图读取与载入、标签切换保留状态、尺寸调整和权限隔离；它不等于真实 ComfyUI 工作流或 Windows 11 的实机验收。
+
+## 推荐：一键环境配置（0.3 版）
+
+安装本程序后，直接点击顶部 **一键下载、安装并连接**，选择 CPU 通用模式或兼容的 NVIDIA 模式，并确认下载。程序会：
+
+1. 自动下载并校验固定版本的 Ollama、ComfyUI Windows portable、FFmpeg 和解压工具。
+2. 自动下载 Qwen2.5 1.5B 剧本模型与 SD1.5 图片模型，创建默认工作流。
+3. 自动启动仅监听本机的两个服务（端口 11435 / 18188），保存全部连接与工具路径。
+4. 以后点击生成时自动启动服务，退出应用时停止本次启动的服务。
+
+**不用分别安装 Ollama、ComfyUI、FFmpeg，也不用手动导入工作流。** 首次联网下载预计约 10 GB，需要至少 25 GB 空间，建议 16 GB 内存。CPU 模式不要求 NVIDIA，速度取决于硬件。下载中断后再次点击配置可以继续已保留的下载；文件 SHA-256 校验通过后才解压或执行。暂不支持自动配置 Windows ARM。
+
+环境配置完成后，只需在应用中填写并保存 **阿里云 Key、区域、模型、当前价格和预算**，再输入故事，点击“一键生成完整短剧”。云端付费调用仍需用户确认；下载模型不会调用 Wan。
+
+工具保存在应用数据目录下的 `tools`，日志为 `local-services.log`。环境设置会备份原有 settings / workflow，然后替换本地服务地址和默认工作流；现有 Key 与项目保留。程序会占用本机 11435 / 18188 端口。无法连接下载源时需解决电脑网络问题后重试。中文系统配音仍需 Windows 安装可用中文 SAPI 语音，可关闭配音保留字幕。首次大型下载、真实模型和完整 Windows 11 环境配置尚未实机验收，自动测试使用小型模拟下载。
+
+下载源和许可证： [Ollama / MIT](https://github.com/ollama/ollama)、[Qwen2.5 / Apache-2.0](https://huggingface.co/Qwen/Qwen2.5-1.5B-Instruct)、[ComfyUI / GPL-3.0](https://github.com/Comfy-Org/ComfyUI)、[SD1.5 / CreativeML OpenRAIL-M](https://huggingface.co/stable-diffusion-v1-5/stable-diffusion-v1-5)、[FFmpeg GPL 构建](https://github.com/GyanD/codexffmpeg)、[7-Zip](https://www.7-zip.org/license.txt)。可执行文件和模型在用户电脑上首次下载，不包含在约 100 MB 的主安装包中。
+
+## 高级：使用自己已安装的工具（替代自动配置）
 
 1. 安装 [Ollama for Windows](https://ollama.com/download/windows)，在终端运行 `ollama pull qwen2.5:7b`。模型名称可改成你已有的模型。默认地址 `http://127.0.0.1:11434`。
 2. 可选：安装 [ComfyUI](https://docs.comfy.org/installation/desktop/windows) 与适合电脑的生图模型，启动服务。默认连接地址 `http://127.0.0.1:8188`，以实际启动日志为准。硬件不适合本地生图时，跳过 ComfyUI，使用已有图片。
@@ -21,7 +53,7 @@ ComfyUI 可选；也可以直接选择本地图片或填写 HTTPS 图片网址�
 4. 安装 [FFmpeg](https://www.gyan.dev/ffmpeg/builds/)，把 FFmpeg 和 FFprobe 加入 PATH，或在应用填写两个 `.exe` 的完整路径。
 5. 在应用填写阿里云百炼 / DashScope API Key、相匹配的北京或新加坡区域及该区域可用的 Wan 模型。默认 `wan2.2-i2v-flash`，固定请求 5 秒、720P。按官方当前报价填写每秒价格和项目预算，币种相同。价格默认 0，未填写前无法付费生成。
 6. 按需开启“Windows 配音”。系统须安装相应语言的传统 SAPI 桌面语音；Windows 设置中的部分自然语音不支持 System.Speech。语音名称可留空使用默认语音，或填写已安装的 SAPI 名称。每镜头旁白须短于 5 秒，过长时程序会提示编辑，不会静默裁切。
-7. 点击“保存设置”，再点击“检测 Ollama / ComfyUI”。应用连接这些已安装的服务；**安装包不包含 Ollama、ComfyUI、模型、FFmpeg**，不会自动下载大型模型。
+7. 点击“保存设置”，再点击“检测 Ollama / ComfyUI”。应用连接本地服务；**主安装包不包含 Ollama、ComfyUI、模型、FFmpeg**；顶部一键环境配置会在首次使用时自动下载。
 
 ## 一键生成
 
@@ -56,4 +88,30 @@ Windows Key 使用 Electron safeStorage / DPAPI 加密，保存在 Electron user
 
 Windows CI 安装 FFmpeg，执行测试、Electron 系统加密 / 中文路径 / 界面隔离 smoke，并构建 NSIS 安装包。Windows Server CI 不等于 Windows 11 实机验证。尚未在真实 Ollama / ComfyUI 模型、Windows 11 和真实付费 Wan 上完成验收；请按 [验收清单](docs/WINDOWS-ACCEPTANCE.md) 验证。开发过程中未提交付费请求。
 
-当前没有背景音乐混音、自动安装模型或角色训练功能。
+当前没有背景音乐混音或角色训练功能。
+
+## 0.5 写实模型更新
+
+默认生图模型改为 Realistic Vision 5.1 fp16，并单独下载作者推荐的 MSE VAE，合计约 2.47 GB。CPU 模式继续支持。升级后重新点击一键环境配置：已安装的工具复用，旧模型不删除，原工作流自动备份；下载并校验新模型后启用新默认图。外部 ComfyUI 可以将 checkpoint / VAE 分别放入 models/checkpoints 和 models/vae。实际画质依赖提示词和构图，未完成真实模型实机画质验收。
+
+全流程：故事→Ollama剧本→ComfyUI分镜图片→上传图片→阿里云Wan图生视频（逐镜头5秒）→下载片段→FFmpeg合并→可选配音与字幕。手动Flow生图后，可在工作台选择保存的本地图片、填写镜头动作提示词，保存项目再生成。北京默认模型720P当前报价0.20元/秒；以官方价格和账号区域为准。ComfyUI第三方Partner节点的账号和点数与阿里云分开。
+
+## 0.6：ComfyUI 完整视频 Flow 与旧模型清理
+
+新增顶部“完整视频 Flow”。完成环境配置并保存 Wan Key、区域、每秒价格和预算后，点击它载入：
+
+**写实模型 → 本地图片 batch → Wan 每图 5 秒片段（付费确认）→ MP4 合并**
+
+默认 `batch_size=2`，即两张同一提示词的图片变体、两个 5 秒片段，合并约 10 秒。修改正向提示词中 `{{PROMPT}}` 为具体画面描述，修改 Wan 节点的 `motion_prompt` 为动作和镜头要求，在 ComfyUI 中点击 Run。CPU 出图时间取决于硬件，5 秒不是图片生成耗时。不同剧情分镜可以使用多个提示词/图片分支，经 ComfyUI ImageBatch 连接 Wan 节点；或继续用工作台的 Ollama 自动分镜流程。
+
+Wan 节点通过本机认证桥接调用桌面程序。API Key 不会放进导出的 JSON，不需要 ComfyUI Partner 账号或点数。付费前应用弹出预算确认；取消不提交新云任务。图像需要上传给阿里云。不会自动生成转场、保证人物一致性或自动加旁白；完整视频 Flow 导出基础无声合并版，原工作台仍支持旁白/字幕功能。
+
+`job_key` 是一段视频任务的稳定编号。相同图片、动作及编号会恢复已有任务，避免重复付费；不同内容必须换编号。请保存 Flow，初次调图时用纯生图 Flow。若 ComfyUI 的种子自动变化导致图片不同，不要反复改编号重跑；在短剧工作台找到 `Flow <job_key>` 项目恢复已有片段。提交结果不明仍会停住，先去阿里云控制台核实。ComfyUI 的 Stop 不保证取消已经提交的云任务。
+
+视频节点由应用自动复制到托管 ComfyUI 的 `custom_nodes/video_generate_bridge`，使用系统已有的 ComfyUI Python 环境。首次升级请完整退出旧版应用再启动，加载环境；若提示缺少节点，关闭旧的 ComfyUI 服务并重启新版。外部自装 ComfyUI 未自动安装这些节点，当前完整视频 Flow 只支持程序托管的服务。轻量本机桥接与 Python 节点不在监听地址之外开放，也不允许来自网页 Origin 的请求。
+
+合并节点会输出 `final.mp4` 的完整路径；同一个任务也保存在工作台项目列表，点击“打开项目文件夹”查看片段及成片。片段之间是直接拼接，尚无自动转场。
+
+“清理未使用的旧模型”按钮只处理早期安装的原版 `v1-5-pruned-emaonly.safetensors`。它校验完整 SHA、检查当前工作流和 ComfyUI 已保存 JSON、确认队列空闲，并在再次校验后移到系统回收站。写实模型、VAE、自行加入的模型、Ollama 和项目均不删除。无法确认引用、文件被修改或存在符号链接时不处理。其他未保存的工作流标签页请先保存，避免其引用无法被检查。历史 `.bak` 不阻止清理；要恢复旧备份时可能需还原或重新下载旧模型。回收站中仍可恢复，真正释放磁盘需要用户确认后自行清空回收站。
+
+测试使用模拟 Wan 请求、真实 FFmpeg 合并，以及 Python 节点连接真实本机 Node 网关验证协议。没有提交付费 API。真实 Windows 11 的 ComfyUI 插件加载、完整流程与真实云端任务仍需实机验收。

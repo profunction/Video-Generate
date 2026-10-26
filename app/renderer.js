@@ -16,6 +16,8 @@ let active = false,
   editing = null;
 function status(message) {
   $("status").textContent = message;
+  $("flowStatus").textContent = message;
+  $("flowStatus").title = message;
 }
 async function action(fn) {
   try {
@@ -224,6 +226,103 @@ action(async () => {
   const cfg = await window.studio.settings();
   for (const f of fields) $(f).value = String(cfg[f] ?? "");
   $("keyStatus").textContent = cfg.hasKey ? "Key 已加密保存" : "";
+  $("setupStatus").textContent = cfg.setupReady
+    ? "已配置，下次生成时自动启动服务"
+    : "首次使用请点击一键配置";
   scene();
   await refresh();
 });
+
+$("setup").onclick = () =>
+  action(async () => {
+    if (active) throw Error("请等待当前任务结束");
+    active = true;
+    $("setup").disabled = true;
+    try {
+      status("准备配置完整环境…");
+      const result = await window.studio.installEnvironment(
+        $("setupMode").value,
+      );
+      if (result.canceled) {
+        status("已取消环境下载");
+        return;
+      }
+      const cfg = await window.studio.settings();
+      for (const f of fields) $(f).value = String(cfg[f] ?? "");
+      $("setupStatus").textContent = "已配置并连接";
+    } finally {
+      active = false;
+      $("setup").disabled = false;
+      await refresh();
+    }
+  });
+
+function editorMode(on) {
+  document.body.classList.toggle("flow-mode", on);
+  $("flowTab").classList.toggle("is-active", on);
+  $("workbenchTab").classList.toggle("is-active", !on);
+  $("loadFlow").disabled = !on;
+  $("useFlow").disabled = !on;
+}
+$("flowTab").onclick = () =>
+  action(async () => {
+    $("flowTab").disabled = true;
+    status("正在启动 ComfyUI 节点编辑器…");
+    try {
+      await window.studio.showFlow();
+      editorMode(true);
+      status(
+        "拖入工作流 JSON，修改节点与连线后，点击 ComfyUI 的运行按钮。可通过其菜单保存工作流。",
+      );
+    } finally {
+      $("flowTab").disabled = false;
+    }
+  });
+$("workbenchTab").onclick = () =>
+  action(async () => {
+    await window.studio.hideFlow();
+    editorMode(false);
+    await refresh();
+  });
+$("loadFlow").onclick = () =>
+  action(async () => {
+    await window.studio.loadDefaultFlow();
+    status(
+      "已载入程序生图 Flow。{{PROMPT}} 用于自动剧本；手动测试时可替换成具体画面描述。",
+    );
+  });
+$("useFlow").onclick = () =>
+  action(async () => {
+    await window.studio.useCurrentFlow();
+    status("当前 Flow 已保存为自动短剧的生图流程。返回短剧工作台即可使用。");
+  });
+
+$("videoFlowTab").onclick = () =>
+  action(async () => {
+    if (active) throw Error("请等待当前任务结束");
+    $("videoFlowTab").disabled = true;
+    try {
+      status("正在载入 图片 → Wan 5秒片段 → 合并MP4…");
+      await window.studio.showVideoFlow();
+      editorMode(true);
+      status(
+        "完整视频Flow：修改图片提示词、batch_size与镜头动作后Run。Wan前会弹出费用确认；任务编号job_key相同可恢复，换图片/提示词请更换编号。",
+      );
+    } finally {
+      $("videoFlowTab").disabled = false;
+    }
+  });
+$("cleanupModels").onclick = () =>
+  action(async () => {
+    if (active) throw Error("请等待任务结束");
+    active = true;
+    $("cleanupModels").disabled = true;
+    try {
+      status("检查旧模型引用与文件完整性，请稍候…");
+      const result = await window.studio.cleanupModels();
+      status(result.message);
+    } finally {
+      active = false;
+      $("cleanupModels").disabled = false;
+    }
+  });

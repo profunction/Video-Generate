@@ -18,6 +18,7 @@ jobs:
       - name: Install FFmpeg and FFprobe
         run: choco install ffmpeg --no-progress -y
       - run: npm test
+      - run: npm run test:nodes
       - run: npm run test:desktop
       - run: npm run dist:win -- --publish never
       - uses: actions/upload-artifact@v4
