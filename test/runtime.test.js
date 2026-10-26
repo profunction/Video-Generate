@@ -14,7 +14,7 @@ test("managed setup binds private ports, supplies model and a usable default wor
   assert.equal(cfg.ollamaModel, "qwen2.5:1.5b");
   const graph = prepareWorkflow(workflow(), "A clockmaker");
   assert.match(graph["2"].inputs.text, /A clockmaker/);
-  assert.equal(graph["1"].inputs.ckpt_name, "v1-5-pruned-emaonly.safetensors");
+  assert.equal(graph["1"].inputs.ckpt_name, "Realistic_Vision_V5.1_fp16-no-ema.safetensors");
   for (const source of Object.values(SOURCES)) {
     assert.equal(new URL(source.url).protocol, "https:");
     assert.match(source.sha, /^[a-f0-9]{64}$/);

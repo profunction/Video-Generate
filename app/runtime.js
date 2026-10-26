@@ -4,6 +4,7 @@ const path = require("node:path");
 const crypto = require("node:crypto");
 const { spawn } = require("node:child_process");
 const { run } = require("./engine");
+const {PHOTO,photoWorkflow,ensurePhotoAssets}=require("./photo-model");
 const SOURCES = {
   ollama: {
     url: "https://github.com/ollama/ollama/releases/download/v0.40.9/ollama-windows-amd64.zip",
@@ -21,10 +22,7 @@ const SOURCES = {
     url: "https://github.com/ip7z/7zip/releases/download/26.05/7zr.exe",
     sha: "9bf582b894dfa665f852d7e9112b02290a1c303c2d95a21fcdc41ffcb03143b7",
   },
-  imageModel: {
-    url: "https://huggingface.co/stable-diffusion-v1-5/stable-diffusion-v1-5/resolve/451f4fe16113bff5a5d2269ed5ad43b0592e9a14/v1-5-pruned-emaonly.safetensors",
-    sha: "6ce0161689b3853acaa03779ec93eafe75a02f4ced659bee03f50797806fa2fa",
-  },
+  imageModel: PHOTO.checkpoint,
 };
 const MODEL = "qwen2.5:1.5b",
   CHECKPOINT = "v1-5-pruned-emaonly.safetensors";
@@ -116,52 +114,8 @@ function managedSettings(root) {
     ),
   };
 }
-function workflow() {
-  return {
-    1: {
-      class_type: "CheckpointLoaderSimple",
-      inputs: { ckpt_name: CHECKPOINT },
-    },
-    2: {
-      class_type: "CLIPTextEncode",
-      inputs: {
-        text: "cinematic still, consistent characters, {{PROMPT}}",
-        clip: ["1", 1],
-      },
-    },
-    3: {
-      class_type: "CLIPTextEncode",
-      inputs: { text: "blurry, distorted, watermark, text", clip: ["1", 1] },
-    },
-    4: {
-      class_type: "EmptyLatentImage",
-      inputs: { width: 768, height: 512, batch_size: 1 },
-    },
-    5: {
-      class_type: "KSampler",
-      inputs: {
-        seed: 1,
-        steps: 20,
-        cfg: 7,
-        sampler_name: "euler",
-        scheduler: "normal",
-        denoise: 1,
-        model: ["1", 0],
-        positive: ["2", 0],
-        negative: ["3", 0],
-        latent_image: ["4", 0],
-      },
-    },
-    6: {
-      class_type: "VAEDecode",
-      inputs: { samples: ["5", 0], vae: ["1", 2] },
-    },
-    7: {
-      class_type: "SaveImage",
-      inputs: { filename_prefix: "VideoGenerate", images: ["6", 0] },
-    },
-  };
-}
+function workflow(){return photoWorkflow();}
+
 class Runtime {
   constructor(root, report = () => {}) {
     this.root = root;
@@ -312,16 +266,7 @@ class Runtime {
       await fs.writeFile(marker, SOURCES[name].sha);
       await fs.rm(archive, { force: true });
     }
-    const checkpoint = path.join(
-      tools,
-      "comfy",
-      "ComfyUI_windows_portable",
-      "ComfyUI",
-      "models",
-      "checkpoints",
-      CHECKPOINT,
-    );
-    await asset(SOURCES.imageModel, checkpoint, this.report);
+    await ensurePhotoAssets(path.join(tools,"comfy","ComfyUI_windows_portable","ComfyUI"),{download:asset,report:this.report});
     // Installed records only mean files exist; ready is written after services and model pull succeed.
     await fs.writeFile(
       path.join(this.root, "setup.json"),

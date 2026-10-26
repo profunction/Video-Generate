@@ -89,3 +89,9 @@ Windows Key 使用 Electron safeStorage / DPAPI 加密，保存在 Electron user
 Windows CI 安装 FFmpeg，执行测试、Electron 系统加密 / 中文路径 / 界面隔离 smoke，并构建 NSIS 安装包。Windows Server CI 不等于 Windows 11 实机验证。尚未在真实 Ollama / ComfyUI 模型、Windows 11 和真实付费 Wan 上完成验收；请按 [验收清单](docs/WINDOWS-ACCEPTANCE.md) 验证。开发过程中未提交付费请求。
 
 当前没有背景音乐混音或角色训练功能。
+
+## 0.5 写实模型更新
+
+默认生图模型改为 Realistic Vision 5.1 fp16，并单独下载作者推荐的 MSE VAE，合计约 2.47 GB。CPU 模式继续支持。升级后重新点击一键环境配置：已安装的工具复用，旧模型不删除，原工作流自动备份；下载并校验新模型后启用新默认图。外部 ComfyUI 可以将 checkpoint / VAE 分别放入 models/checkpoints 和 models/vae。实际画质依赖提示词和构图，未完成真实模型实机画质验收。
+
+全流程：故事→Ollama剧本→ComfyUI分镜图片→上传图片→阿里云Wan图生视频（逐镜头5秒）→下载片段→FFmpeg合并→可选配音与字幕。手动Flow生图后，可在工作台选择保存的本地图片、填写镜头动作提示词，保存项目再生成。北京默认模型720P当前报价0.20元/秒；以官方价格和账号区域为准。ComfyUI第三方Partner节点的账号和点数与阿里云分开。

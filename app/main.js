@@ -167,7 +167,7 @@ app.whenReady().then(async () => {
         cancelId: 0,
         message: "一键配置完整短剧环境",
         detail:
-          "将下载约 10 GB 的工具和模型，首次需要至少 25 GB 空闲空间，建议 16 GB 内存。自动下载 Ollama、ComfyUI、FFmpeg、7-Zip、Qwen2.5 3B 和 SD1.5，并配置本地连接与默认工作流。CPU 模式无需 NVIDIA，但生图会较慢。会备份并替换现有的本地连接配置及工作流，不更改 API Key 和项目。下载与使用须遵守这些项目的许可证（见 README）。不会发起付费 Wan 请求。",
+          "将下载约 10 GB 的工具和模型，首次需要至少 25 GB 空闲空间，建议 16 GB 内存。自动下载 Ollama、ComfyUI、FFmpeg、7-Zip、Qwen2.5 1.5B 和 Realistic Vision 5.1 写实模型及 VAE，并配置本地连接与默认工作流。CPU 模式无需 NVIDIA，但生图会较慢。会备份并替换现有的本地连接配置及工作流，不更改 API Key 和项目。下载与使用须遵守这些项目的许可证（见 README）。不会发起付费 Wan 请求。",
       });
       if (result.response !== 1) return { canceled: true };
       const config = await runtime.install(mode);
