@@ -6,6 +6,7 @@ const {
   safeStorage,
   shell,
   nativeImage,
+  net,
 } = require("electron");
 const fs = require("node:fs/promises");
 const path = require("node:path");
@@ -161,6 +162,9 @@ async function importImage(source, target) {
   return target;
 }
 const emit = (message) => win?.webContents.send("progress", message);
+// Node's fetch gives up when a reply has not started after 5 minutes. A self-hosted
+// server answers only once the clip is made, so it goes through Chromium's network.
+const patientFetch = (url, init) => net.fetch(url, init);
 const PROJECT_ID = /^[a-f0-9-]{36}$/;
 function projectPath(id) {
   if (!PROJECT_ID.test(id)) throw Error("Invalid project");
@@ -580,7 +584,7 @@ app.whenReady().then(async () => {
             : provider === "zhipu"
               ? new Zhipu(cfg, videoKey)
               : provider === "selfHosted"
-                ? new SelfHosted(cfg, videoKey)
+                ? new SelfHosted(cfg, videoKey, patientFetch)
                 : wan,
         comfy: graph ? new Comfy(cfg) : null,
         workflow: graph,
