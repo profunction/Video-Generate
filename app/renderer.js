@@ -181,21 +181,26 @@ async function refresh() {
     $("projects").append(row);
   }
 }
+async function saveSettings() {
+  const value = { key: $("key").value };
+  for (const f of fields) value[f] = $(f).value;
+  value.narration = value.narration === "true";
+  await window.studio.saveSettings(value);
+  $("key").value = "";
+  $("keyStatus").textContent = (await window.studio.settings()).hasKey
+    ? "Key 已加密保存"
+    : "";
+}
 $("save").onclick = () =>
   action(async () => {
-    const value = { key: $("key").value };
-    for (const f of fields) value[f] = $(f).value;
-    value.narration = value.narration === "true";
-    await window.studio.saveSettings(value);
-    $("key").value = "";
-    $("keyStatus").textContent = (await window.studio.settings()).hasKey
-      ? "Key 已加密保存"
-      : "";
+    await saveSettings();
     status("设置已保存");
   });
+// Buttons that talk to Ollama or ComfyUI save the addresses on screen first.
 $("checkLocal").onclick = () =>
   action(async () => {
-    status("正在检测已保存的本地服务地址…");
+    await saveSettings();
+    status("设置已保存，正在检测本地服务…");
     status(await window.studio.checkLocal());
   });
 $("workflow").onclick = () =>
@@ -204,6 +209,7 @@ $("workflow").onclick = () =>
   });
 $("builtin").onclick = () =>
   action(async () => {
+    await saveSettings();
     status(
       (await window.studio.resetWorkflow())
         ? "已改用内置 SD1.5 工作流，ComfyUI 里的“Video Generate”工作流也恢复成了默认设置"
@@ -212,6 +218,7 @@ $("builtin").onclick = () =>
   });
 $("comfyEdit").onclick = () =>
   action(async () => {
+    await saveSettings();
     await window.studio.editWorkflow();
     status(
       "已在浏览器打开 ComfyUI。在左边的“工作流”（Workflows）列表里打开“Video Generate”，调整后按 Ctrl+S 保存；app 下次画图会自动用你保存的版本。列表里没看到就刷新一下页面。",

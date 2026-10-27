@@ -22,7 +22,7 @@ ComfyUI 可选；也可以直接选择本地图片或填写 HTTPS 图片网址�
 4. 安装 [FFmpeg](https://www.gyan.dev/ffmpeg/builds/)，把 FFmpeg 和 FFprobe 加入 PATH，或在应用填写两个 `.exe` 的完整路径。
 5. 在应用填写阿里云百炼 / DashScope API Key、相匹配的北京或新加坡区域及该区域可用的 Wan 模型。默认 `wan2.2-i2v-flash`，固定请求 5 秒、720P。按官方当前报价填写每秒价格和项目预算，币种相同。价格默认 0，未填写前无法付费生成。
 6. 按需开启“Windows 配音”。系统须安装相应语言的传统 SAPI 桌面语音；Windows 设置中的部分自然语音不支持 System.Speech。语音名称可留空使用默认语音，或填写已安装的 SAPI 名称；名称填错时，错误提示会列出本机已安装的语音。每镜头旁白须短于 5 秒，过长时程序会提示编辑，不会静默裁切。
-7. 点击“保存设置”，再点击“检测 Ollama / ComfyUI / FFmpeg”，它会检查服务连接、Ollama 模型是否已拉取、用的是内置还是导入的工作流以及会用哪个 ComfyUI 模型，还有 FFmpeg / FFprobe 能否启动。应用连接这些已安装的服务；**安装包不包含 Ollama、ComfyUI、模型、FFmpeg**，不会自动下载大型模型。
+7. 点击“保存设置”，再点击“检测 Ollama / ComfyUI / FFmpeg”，它会先保存屏幕上的设置，再检查服务连接、Ollama 模型是否已拉取、用的是哪个工作流以及会用哪个 ComfyUI 模型，还有 FFmpeg / FFprobe 能否启动。地址填错时，如果 Ollama 或 ComfyUI 正在常用地址（11434 / 8188 / 8000）上运行，会直接提示正确地址。应用连接这些已安装的服务；**安装包不包含 Ollama、ComfyUI、模型、FFmpeg**，不会自动下载大型模型。
 
 ## 一键生成
 

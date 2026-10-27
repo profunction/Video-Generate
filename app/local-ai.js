@@ -18,7 +18,9 @@ const CONTROL = ["fixed", "increment", "decrement", "randomize"];
 // mapping widget values to inputs in node-definition order as ComfyUI does.
 function toApiWorkflow(ui, info) {
   if (!Array.isArray(ui?.nodes) || !Array.isArray(ui.links))
-    throw Error("Not a ComfyUI workflow file");
+    throw Error(
+      "The Video Generate workflow in ComfyUI is damaged; press 改用内置工作流 to restore it",
+    );
   if (ui.definitions?.subgraphs?.length)
     throw Error("Subgraphs are not supported; expand them in ComfyUI first");
   const nodes = new Map(ui.nodes.map((n) => [n.id, n]));
@@ -301,7 +303,7 @@ class Comfy {
       throw Error(`ComfyUI HTTP ${r.status} while reading the workflow`);
     const ui = await r.json();
     const info = {};
-    for (const type of new Set(ui.nodes?.map((n) => n.type)))
+    for (const type of new Set(ui?.nodes?.map((n) => n.type)))
       if (!EDITOR_ONLY.has(type))
         Object.assign(
           info,
@@ -426,9 +428,14 @@ class Comfy {
 }
 async function checkServices(cfg, fetcher = fetch) {
   const report = [];
-  for (const [name, base, route] of [
-    ["Ollama", cfg.ollamaUrl, "/api/tags"],
-    ["ComfyUI", cfg.comfyUrl, "/system_stats"],
+  for (const [name, base, route, usual] of [
+    ["Ollama", cfg.ollamaUrl, "/api/tags", ["http://127.0.0.1:11434"]],
+    [
+      "ComfyUI",
+      cfg.comfyUrl,
+      "/system_stats",
+      ["http://127.0.0.1:8188", "http://127.0.0.1:8000"],
+    ],
   ]) {
     try {
       const out = await json(localBase(base) + route, {}, fetcher);
@@ -445,7 +452,21 @@ async function checkServices(cfg, fetcher = fetch) {
             : ""),
       );
     } catch (e) {
-      report.push(name + ": " + e.message);
+      // A mistyped port is the usual cause, so look where the service normally listens.
+      let hint = `\n→ 没有找到正在运行的 ${name}，请先启动它`;
+      for (const other of usual) {
+        if (String(base).replace(/\/+$/, "") === other) continue;
+        try {
+          await json(
+            other + route,
+            { signal: AbortSignal.timeout(3000) },
+            fetcher,
+          );
+          hint = `\n→ ${name} 正在 ${other} 运行：把设置里的“${name} 地址”改成它`;
+          break;
+        } catch {}
+      }
+      report.push(name + ": " + e.message + hint);
     }
   }
   return report.join("\n");

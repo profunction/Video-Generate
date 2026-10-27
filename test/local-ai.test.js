@@ -408,6 +408,7 @@ test("edits made in ComfyUI's editor are converted the way ComfyUI runs them", (
   ]);
   ui.nodes.push({ id: 13, type: "CustomThing", mode: 0, inputs: [] });
   assert.throws(() => toApiWorkflow(ui, objectInfo), /CustomThing/);
+  assert.throws(() => toApiWorkflow(null, objectInfo), /改用内置工作流/);
 });
 test("the workflow is shared through ComfyUI's workflow list", async () => {
   const calls = [];
@@ -438,6 +439,29 @@ test("the workflow is shared through ComfyUI's workflow list", async () => {
   assert.equal(await comfy.publish(builtInWorkflowUi, true), true);
   assert.equal((await comfy.edited())["5"].inputs.steps, 20);
   assert.ok(calls.includes("GET /object_info/KSampler"));
+});
+test("a wrong port is answered with the address where the service runs", async () => {
+  const report = await checkServices(
+    {
+      ...cfg,
+      ollamaUrl: "http://127.0.0.1:11435",
+      comfyUrl: "http://127.0.0.1:18188",
+    },
+    async (url) => {
+      const u = new URL(url);
+      if (u.port === "11434")
+        return { ok: true, json: async () => ({ models: [{ name: "test" }] }) };
+      if (u.port === "8000") return { ok: true, json: async () => ({}) };
+      throw new TypeError("fetch failed");
+    },
+  );
+  assert.match(report, /Ollama 正在 http:\/\/127\.0\.0\.1:11434 运行/);
+  assert.match(report, /ComfyUI 正在 http:\/\/127\.0\.0\.1:8000 运行/);
+  const none = await checkServices(cfg, async () => {
+    throw new TypeError("fetch failed");
+  });
+  assert.match(none, /没有找到正在运行的 Ollama/);
+  assert.match(none, /没有找到正在运行的 ComfyUI/);
 });
 test("subtitles skip scenes without narration but keep their time slots", () => {
   const text = subtitles([
