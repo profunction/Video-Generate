@@ -66,6 +66,20 @@ test("story generation validates returned scene count and structured fields", as
     /count mismatch/,
   );
 });
+test("a thinking model's reasoning before the script is ignored", async () => {
+  const scene = { prompt: "Walk", imagePrompt: "Hero", narration: "Hi" };
+  const story = await storyboard("story", 1, cfg, async () => ({
+    ok: true,
+    json: async () => ({
+      message: {
+        content:
+          "<think>\nThe user wants {a story}.\n</think>\n\n" +
+          JSON.stringify({ title: "T", scenes: [scene] }),
+      },
+    }),
+  }));
+  assert.equal(story.scenes[0].prompt, "Walk");
+});
 test("story generation constrains JSON, trims extra scenes and whitespace", async () => {
   const story = await storyboard("story", 1, cfg, async (url, options) => {
     const body = JSON.parse(options.body);
@@ -216,6 +230,7 @@ test("local AI errors explain unreachable services and provider replies", async 
       url.endsWith("/api/tags") ? { models: [{ name: "other:latest" }] } : {},
   }));
   assert.match(report, /ollama pull test/);
+  assert.match(report, /改成已安装的 other:latest/);
 });
 test("ComfyUI polling stops on finished jobs without images and on lost jobs", async () => {
   const history = (job) => async (url) => ({

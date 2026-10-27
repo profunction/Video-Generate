@@ -241,7 +241,10 @@ async function storyboard(
       },
       fetcher,
     );
-    content = data.message?.content;
+    // Thinking models such as qwen3 may put their reasoning before the JSON.
+    content = String(data.message?.content ?? "")
+      .replace(/<think>[\s\S]*?<\/think>/g, "")
+      .trim();
   }
   let parsed;
   try {
@@ -503,7 +506,10 @@ async function checkServices(cfg, fetcher = fetch) {
           ![cfg.ollamaModel, cfg.ollamaModel + ":latest"].some((m) =>
             names.includes(m),
           )
-            ? `\nOllama: model ${cfg.ollamaModel} is not installed; run: ollama pull ${cfg.ollamaModel}`
+            ? `\nOllama：设置里的模型 ${cfg.ollamaModel} 没有安装。` +
+              (names.length
+                ? `把“Ollama 模型”改成已安装的 ${names[names.length - 1]}，或运行 ollama pull ${cfg.ollamaModel}`
+                : `运行 ollama pull ${cfg.ollamaModel}`)
             : ""),
       );
     } catch (e) {
