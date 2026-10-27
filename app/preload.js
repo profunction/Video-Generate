@@ -5,6 +5,7 @@ contextBridge.exposeInMainWorld("studio", {
   checkLocal: () => ipcRenderer.invoke("local:check"),
   importWorkflow: () => ipcRenderer.invoke("workflow:import"),
   resetWorkflow: () => ipcRenderer.invoke("workflow:reset"),
+  editWorkflow: () => ipcRenderer.invoke("workflow:edit"),
   pickImage: () => ipcRenderer.invoke("image:pick"),
   update: (id, scenes) => ipcRenderer.invoke("project:update", id, scenes),
   settings: () => ipcRenderer.invoke("settings:get"),

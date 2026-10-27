@@ -17,6 +17,7 @@ const {
   checkServices,
   prepareWorkflow,
   builtInWorkflow,
+  builtInWorkflowUi,
 } = require("./local-ai");
 const { finish } = require("./finish");
 const { produce } = require("./pipeline");
@@ -57,11 +58,25 @@ async function save(file, value) {
   await fs.writeFile(file + ".tmp", JSON.stringify(value, null, 2));
   await fs.rename(file + ".tmp", file);
 }
-// An imported workflow wins; otherwise the built-in SD1.5 one is used.
-async function workflow() {
+// An imported file wins, then the copy edited in ComfyUI, then the built-in SD1.5 graph.
+async function workflow(cfg) {
   const imported = await read(path.join(root(), "workflow.json"), null);
-  return { graph: imported || builtInWorkflow, imported: Boolean(imported) };
+  if (imported) return { graph: imported, source: "imported" };
+  let edited = null;
+  try {
+    edited = await new Comfy(cfg).edited();
+  } catch (e) {
+    // Without ComfyUI the built-in graph stands in; the ComfyUI check reports the outage.
+    if (!/Cannot reach|timed out/.test(e.message)) throw e;
+  }
+  if (edited) return { graph: edited, source: "comfyui" };
+  return { graph: builtInWorkflow, source: "built-in" };
 }
+const SOURCES = {
+  imported: "imported",
+  comfyui: "Video Generate (edited in ComfyUI)",
+  "built-in": "built-in SD1.5",
+};
 async function settings() {
   return {
     ...defaults,
@@ -216,19 +231,22 @@ app.whenReady().then(async () => {
   ipcMain.handle("local:check", async () => {
     const cfg = await settings();
     const report = [await checkServices(cfg)];
-    const flow = await workflow();
-    let models = "";
+    let line = "ComfyUI workflow: ";
     try {
-      const used = await new Comfy(cfg).ready(flow.graph);
-      if (used.length) models = ` · model ${used.join(", ")}`;
+      const flow = await workflow(cfg);
+      line += SOURCES[flow.source];
+      try {
+        const used = await new Comfy(cfg).ready(flow.graph);
+        if (used.length) line += ` · model ${used.join(", ")}`;
+      } catch (e) {
+        // The ComfyUI line above already reports an unreachable service.
+        if (!/Cannot reach|timed out/.test(e.message))
+          line += ` · ${e.message}`;
+      }
     } catch (e) {
-      // The ComfyUI line above already reports an unreachable service or a bad address.
-      if (!/Cannot reach|timed out|localhost/.test(e.message))
-        models = ` · ${e.message}`;
+      line += e.message;
     }
-    report.push(
-      `ComfyUI workflow: ${flow.imported ? "imported" : "built-in SD1.5"}${models}`,
-    );
+    report.push(line);
     for (const [name, binary] of [
       ["FFmpeg", cfg.ffmpeg],
       ["FFprobe", cfg.ffprobe],
@@ -277,9 +295,24 @@ app.whenReady().then(async () => {
     await save(path.join(root(), "workflow.json"), graph);
     return true;
   });
+  ipcMain.handle("workflow:edit", async () => {
+    if (busy) throw Error("Generation is running");
+    const comfy = new Comfy(await settings());
+    // Adds the built-in graph to ComfyUI's workflow list unless the user already has a copy there.
+    await comfy.publish(builtInWorkflowUi);
+    // From now on the copy in ComfyUI is the one used.
+    await fs.rm(path.join(root(), "workflow.json"), { force: true });
+    await shell.openExternal(comfy.base);
+  });
   ipcMain.handle("workflow:reset", async () => {
     if (busy) throw Error("Generation is running");
     await fs.rm(path.join(root(), "workflow.json"), { force: true });
+    // Also restore the copy in ComfyUI's workflow list when ComfyUI is running.
+    try {
+      return await new Comfy(await settings()).publish(builtInWorkflowUi, true);
+    } catch {
+      return false;
+    }
   });
   ipcMain.handle("project:update", async (_, id, scenes) => {
     if (busy) throw Error("Generation is running");
@@ -366,7 +399,7 @@ app.whenReady().then(async () => {
           !s.image &&
           !(i > 0 && s.continuePrevious),
       );
-      const graph = needsComfy ? (await workflow()).graph : null;
+      const graph = needsComfy ? (await workflow(cfg)).graph : null;
       // Check ComfyUI and its model before the approval dialog, so nothing is paid for first.
       if (graph) {
         emit("正在检查 ComfyUI 和模型…");

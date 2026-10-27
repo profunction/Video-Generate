@@ -3,6 +3,87 @@ const path = require("node:path");
 const crypto = require("node:crypto");
 // Used when no workflow was imported; the checkpoint is matched to ComfyUI's models.
 const builtInWorkflow = require("./sd15-workflow.json");
+// The same graph as ComfyUI shows it, placed in ComfyUI's workflow list for editing.
+const builtInWorkflowUi = require("./sd15-workflow-ui.json");
+const LIBRARY = "workflows/Video Generate.json";
+// Nodes that exist only in ComfyUI's editor and never run on the server.
+const EDITOR_ONLY = new Set([
+  "Note",
+  "MarkdownNote",
+  "Reroute",
+  "PrimitiveNode",
+]);
+const CONTROL = ["fixed", "increment", "decrement", "randomize"];
+// Converts a workflow saved by ComfyUI's editor into the graph its server runs,
+// mapping widget values to inputs in node-definition order as ComfyUI does.
+function toApiWorkflow(ui, info) {
+  if (!Array.isArray(ui?.nodes) || !Array.isArray(ui.links))
+    throw Error("Not a ComfyUI workflow file");
+  if (ui.definitions?.subgraphs?.length)
+    throw Error("Subgraphs are not supported; expand them in ComfyUI first");
+  const nodes = new Map(ui.nodes.map((n) => [n.id, n]));
+  const links = new Map(ui.links.map((l) => [l[0], l]));
+  const source = (id, seen = new Set()) => {
+    const link = links.get(id);
+    if (!link || seen.has(id)) return undefined;
+    seen.add(id);
+    const [, from, slot, , , type] = link;
+    const node = nodes.get(from);
+    if (!node || node.mode === 2) return undefined;
+    if (node.type === "PrimitiveNode") return node.widgets_values?.[0];
+    if (node.type === "Reroute") return source(node.inputs?.[0]?.link, seen);
+    // A bypassed node passes on its input of the same type.
+    if (node.mode === 4) {
+      const pass = node.inputs?.find((i) => i.type === type && i.link != null);
+      return pass ? source(pass.link, seen) : undefined;
+    }
+    return [String(from), slot];
+  };
+  const graph = {};
+  for (const node of ui.nodes) {
+    if (EDITOR_ONLY.has(node.type) || node.mode === 2 || node.mode === 4)
+      continue;
+    const spec = info[node.type];
+    if (!spec)
+      throw Error(
+        `ComfyUI has no node "${node.type}"; install its custom node or remove it`,
+      );
+    const named =
+      node.widgets_values && !Array.isArray(node.widgets_values)
+        ? node.widgets_values
+        : null;
+    const values = Array.isArray(node.widgets_values)
+      ? [...node.widgets_values]
+      : [];
+    const inputs = {};
+    for (const group of ["required", "optional"]) {
+      const defs = spec.input?.[group] || {};
+      for (const name of spec.input_order?.[group] || Object.keys(defs)) {
+        const [type, opts = {}] = defs[name] || [];
+        const widget =
+          !opts.forceInput &&
+          (Array.isArray(type) ||
+            ["INT", "FLOAT", "STRING", "BOOLEAN", "COMBO"].includes(type));
+        let value;
+        if (widget) {
+          value = named ? named[name] : values.shift();
+          // Editor-only companions: seed's "control after generate" and the upload button.
+          if (!named && CONTROL.includes(values[0]) && type === "INT")
+            values.shift();
+          if (!named && opts.image_upload && values[0] === "image")
+            values.shift();
+        }
+        const socket = node.inputs?.find((i) => i.name === name);
+        if (socket?.link != null) {
+          const from = source(socket.link);
+          if (from !== undefined) inputs[name] = from;
+        } else if (widget && value !== undefined) inputs[name] = value;
+      }
+    }
+    graph[String(node.id)] = { class_type: node.type, inputs };
+  }
+  return graph;
+}
 function localBase(value) {
   const url = new URL(value);
   if (
@@ -185,6 +266,53 @@ class Comfy {
     this.fetch = fetcher;
     this.pause = pause;
   }
+  library() {
+    return this.base + "/api/userdata/" + encodeURIComponent(LIBRARY);
+  }
+  async request(url, options = {}) {
+    try {
+      return await this.fetch(url, {
+        signal: AbortSignal.timeout(30000),
+        ...options,
+      });
+    } catch {
+      throw Error(
+        `Cannot reach ${this.base}; start the service and check its address`,
+      );
+    }
+  }
+  // Puts the editable workflow into ComfyUI's workflow list, keeping an existing copy unless told otherwise.
+  async publish(ui, overwrite = false) {
+    const r = await this.request(this.library() + `?overwrite=${overwrite}`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(ui, null, 2),
+    });
+    if (r.status === 409) return false;
+    if (!r.ok)
+      throw Error(`ComfyUI HTTP ${r.status} while saving the workflow`);
+    return true;
+  }
+  // The "Video Generate" workflow as last saved in ComfyUI, converted for the server, or null.
+  async edited() {
+    const r = await this.request(this.library());
+    if (r.status === 404) return null;
+    if (!r.ok)
+      throw Error(`ComfyUI HTTP ${r.status} while reading the workflow`);
+    const ui = await r.json();
+    const info = {};
+    for (const type of new Set(ui.nodes?.map((n) => n.type)))
+      if (!EDITOR_ONLY.has(type))
+        Object.assign(
+          info,
+          await json(
+            this.base + "/object_info/" + encodeURIComponent(type),
+            {},
+            this.fetch,
+          ),
+        );
+    return toApiWorkflow(ui, info);
+  }
   async checkpoints() {
     const info = await json(
       this.base + "/object_info/CheckpointLoaderSimple",
@@ -327,7 +455,9 @@ module.exports = {
   storyboard,
   prepareWorkflow,
   pickCheckpoint,
+  toApiWorkflow,
   builtInWorkflow,
+  builtInWorkflowUi,
   Comfy,
   checkServices,
 };

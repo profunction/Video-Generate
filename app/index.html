@@ -83,6 +83,8 @@
         <button id="save">保存设置</button><span id="keyStatus"></span
         ><button class="secondary" id="checkLocal">
           检测 Ollama / ComfyUI / FFmpeg</button
+        ><button class="secondary" id="comfyEdit">
+          在 ComfyUI 里调整工作流</button
         ><button class="secondary" id="workflow">
           导入自己的 ComfyUI 工作流（可选）</button
         ><button class="secondary" id="builtin">改用内置工作流</button>
@@ -93,8 +95,10 @@
             画图时，安装 ComfyUI，把 SD1.5 模型（例如
             v1-5-pruned-emaonly-fp16.safetensors）放进 models/checkpoints
             并启动服务即可：应用自带 SD1.5
-            工作流，会自动使用你装好的模型，不需要导入。想用自己的工作流时，导出
-            API 格式 JSON，把正向提示词替换为 {{PROMPT}}，确保包含 SaveImage
+            工作流，会自动使用你装好的模型，不需要导入。想调整画图参数时，点“在
+            ComfyUI 里调整工作流”，在 ComfyUI 左边的“工作流”列表里打开“Video
+            Generate”，改完按 Ctrl+S 保存即可。想用自己的工作流时，导出 API 格式
+            JSON，把正向提示词替换为 {{PROMPT}}，确保包含 SaveImage
             节点，再点“导入自己的 ComfyUI 工作流”。无需 ComfyUI
             时，直接选择本地图片或填写图片网址。应用连接这些服务，不包含模型和服务安装程序。
           </p>

@@ -204,8 +204,18 @@ $("workflow").onclick = () =>
   });
 $("builtin").onclick = () =>
   action(async () => {
-    await window.studio.resetWorkflow();
-    status("已改用内置 SD1.5 工作流，会自动使用 ComfyUI 里装好的模型");
+    status(
+      (await window.studio.resetWorkflow())
+        ? "已改用内置 SD1.5 工作流，ComfyUI 里的“Video Generate”工作流也恢复成了默认设置"
+        : "已改用内置 SD1.5 工作流。ComfyUI 没有打开，里面的“Video Generate”工作流没有恢复；打开 ComfyUI 后再点一次",
+    );
+  });
+$("comfyEdit").onclick = () =>
+  action(async () => {
+    await window.studio.editWorkflow();
+    status(
+      "已在浏览器打开 ComfyUI。在左边的“工作流”（Workflows）列表里打开“Video Generate”，调整后按 Ctrl+S 保存；app 下次画图会自动用你保存的版本。列表里没看到就刷新一下页面。",
+    );
   });
 $("add").onclick = () => scene();
 $("newProject").onclick = () => {

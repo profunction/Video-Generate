@@ -17,7 +17,8 @@ ComfyUI 可选；也可以直接选择本地图片或填写 HTTPS 图片网址�
 1. 安装 [Ollama for Windows](https://ollama.com/download/windows)，在终端运行 `ollama pull qwen2.5:7b`。需要 Ollama 0.5 或更新版本（使用结构化 JSON 输出）。模型名称可改成你已有的模型。默认地址 `http://127.0.0.1:11434`。
 2. 可选：安装 [ComfyUI](https://docs.comfy.org/installation/desktop/windows) 与适合电脑的生图模型，启动服务。默认连接地址 `http://127.0.0.1:8188`，以实际启动日志为准。硬件不适合本地生图时，跳过 ComfyUI，使用已有图片。
 3. 用 ComfyUI 画图时，把 SD1.5 模型（例如 [`v1-5-pruned-emaonly-fp16.safetensors`](https://huggingface.co/Comfy-Org/stable-diffusion-v1-5-archive/blob/main/v1-5-pruned-emaonly-fp16.safetensors)）放进 ComfyUI 的 `models/checkpoints`，启动 ComfyUI 即可。应用**自带 SD1.5 画图工作流**（912×512，接近 16:9），会自动使用 ComfyUI 里装好的 SD1.5 模型，不需要导入任何文件。
-   - 想用自己的工作流（例如 SDXL / Flux）：在 ComfyUI 导出 **API 格式 JSON**，把正向提示词替换为 `{{PROMPT}}`，确保包含 `SaveImage` 节点，再点“导入自己的 ComfyUI 工作流（可选）”。只导入可信的工作流，模型和自定义节点须事先安装。工作流里的模型在 ComfyUI 中找不到时，会自动换成已安装的 SD1.5 模型。点“改用内置工作流”可以回到内置工作流。[示例工作流](examples/comfy-sd15-api.json)与内置工作流相同。
+   - **在 ComfyUI 里看和调整这个工作流**：点“在 ComfyUI 里调整工作流”，应用会把它放进 ComfyUI 的“工作流”（Workflows）列表并打开 ComfyUI。打开列表里的“Video Generate”，就能看到全部节点（带中文说明），可以改模型、图片大小、步数、CFG、采样器和正负提示词，改完按 Ctrl+S 保存，应用下次画图就用你保存的版本，不需要导出或导入。正向提示词里的 `{{PROMPT}}` 不能删，删了会在付费前提示。暂不支持子图（subgraph），缺少的插件节点会在付费前报出名字。
+   - 想用自己的工作流（例如 SDXL / Flux）：在 ComfyUI 导出 **API 格式 JSON**，把正向提示词替换为 `{{PROMPT}}`，确保包含 `SaveImage` 节点，再点“导入自己的 ComfyUI 工作流（可选）”。只导入可信的工作流，模型和自定义节点须事先安装。工作流里的模型在 ComfyUI 中找不到时，会自动换成已安装的 SD1.5 模型。点“改用内置工作流”可以回到内置工作流，同时把 ComfyUI 里的“Video Generate”恢复成默认设置。使用顺序：导入的工作流 → ComfyUI 里保存的“Video Generate” → 内置工作流。[示例工作流](examples/comfy-sd15-api.json)与内置工作流相同。
 4. 安装 [FFmpeg](https://www.gyan.dev/ffmpeg/builds/)，把 FFmpeg 和 FFprobe 加入 PATH，或在应用填写两个 `.exe` 的完整路径。
 5. 在应用填写阿里云百炼 / DashScope API Key、相匹配的北京或新加坡区域及该区域可用的 Wan 模型。默认 `wan2.2-i2v-flash`，固定请求 5 秒、720P。按官方当前报价填写每秒价格和项目预算，币种相同。价格默认 0，未填写前无法付费生成。
 6. 按需开启“Windows 配音”。系统须安装相应语言的传统 SAPI 桌面语音；Windows 设置中的部分自然语音不支持 System.Speech。语音名称可留空使用默认语音，或填写已安装的 SAPI 名称；名称填错时，错误提示会列出本机已安装的语音。每镜头旁白须短于 5 秒，过长时程序会提示编辑，不会静默裁切。

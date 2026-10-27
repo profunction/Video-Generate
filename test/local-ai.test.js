@@ -8,7 +8,9 @@ const {
   storyboard,
   prepareWorkflow,
   pickCheckpoint,
+  toApiWorkflow,
   builtInWorkflow,
+  builtInWorkflowUi,
   Comfy,
   checkServices,
 } = require("../app/local-ai");
@@ -243,6 +245,199 @@ test("the built-in workflow uses the installed SD1.5 model without an import", a
     () => none.ready(builtInWorkflow),
     /v1-5-pruned-emaonly-fp16\.safetensors/,
   );
+});
+// Node definitions shaped like ComfyUI's /object_info replies (both combo formats).
+const spec = (type, options = {}) => [type, options];
+const objectInfo = {
+  CheckpointLoaderSimple: {
+    input: {
+      required: {
+        ckpt_name: spec("COMBO", {
+          options: ["v1-5-pruned-emaonly-fp16.safetensors"],
+        }),
+      },
+    },
+    input_order: { required: ["ckpt_name"] },
+  },
+  CLIPTextEncode: {
+    input: {
+      required: {
+        text: spec("STRING", { multiline: true, dynamicPrompts: true }),
+        clip: spec("CLIP"),
+      },
+    },
+    input_order: { required: ["text", "clip"] },
+  },
+  EmptyLatentImage: {
+    input: {
+      required: {
+        width: spec("INT", { default: 512 }),
+        height: spec("INT", { default: 512 }),
+        batch_size: spec("INT", { default: 1 }),
+      },
+    },
+  },
+  KSampler: {
+    input: {
+      required: {
+        model: spec("MODEL"),
+        seed: spec("INT", { control_after_generate: true }),
+        steps: spec("INT"),
+        cfg: spec("FLOAT"),
+        sampler_name: [["euler", "dpmpp_2m"], {}],
+        scheduler: [["normal", "karras"], {}],
+        positive: spec("CONDITIONING"),
+        negative: spec("CONDITIONING"),
+        latent_image: spec("LATENT"),
+        denoise: spec("FLOAT"),
+      },
+    },
+  },
+  LoraLoader: {
+    input: {
+      required: {
+        model: spec("MODEL"),
+        clip: spec("CLIP"),
+        lora_name: [["style.safetensors"], {}],
+        strength_model: spec("FLOAT"),
+        strength_clip: spec("FLOAT"),
+      },
+    },
+  },
+  VAEDecode: {
+    input: { required: { samples: spec("LATENT"), vae: spec("VAE") } },
+  },
+  SaveImage: {
+    input: {
+      required: {
+        images: spec("IMAGE"),
+        filename_prefix: spec("STRING", { default: "ComfyUI" }),
+      },
+      hidden: { prompt: "PROMPT" },
+    },
+  },
+};
+test("the ComfyUI copy of the built-in workflow runs the same graph", () => {
+  assert.deepEqual(
+    toApiWorkflow(builtInWorkflowUi, objectInfo),
+    builtInWorkflow,
+  );
+});
+test("edits made in ComfyUI's editor are converted the way ComfyUI runs them", () => {
+  const ui = structuredClone(builtInWorkflowUi);
+  const node = (id) => ui.nodes.find((n) => n.id === id);
+  // Changed settings, saved by a newer editor that lists widget sockets too.
+  node(5).widgets_values = [7, "fixed", 30, 6.5, "dpmpp_2m", "karras", 1];
+  node(5).inputs.push({
+    name: "seed",
+    type: "INT",
+    widget: { name: "seed" },
+    link: null,
+  });
+  // A reroute between VAE Decode and Save Image.
+  ui.nodes.push({
+    id: 9,
+    type: "Reroute",
+    mode: 0,
+    inputs: [{ name: "", type: "*", link: 10 }],
+    outputs: [{ name: "", type: "IMAGE", links: [11] }],
+  });
+  ui.links = ui.links.filter((l) => l[0] !== 9);
+  ui.links.push([10, 6, 0, 9, 0, "IMAGE"], [11, 9, 0, 7, 0, "IMAGE"]);
+  node(7).inputs[0].link = 11;
+  // A primitive driving the width, and a bypassed LoRA on the model path.
+  ui.nodes.push({
+    id: 10,
+    type: "PrimitiveNode",
+    mode: 0,
+    outputs: [{ name: "INT", type: "INT", links: [12] }],
+    widgets_values: [1024, "fixed"],
+  });
+  node(4).inputs.push({
+    name: "width",
+    type: "INT",
+    widget: { name: "width" },
+    link: 12,
+  });
+  ui.links.push([12, 10, 0, 4, 0, "INT"]);
+  ui.nodes.push({
+    id: 11,
+    type: "LoraLoader",
+    mode: 4,
+    inputs: [
+      { name: "model", type: "MODEL", link: 13 },
+      { name: "clip", type: "CLIP", link: null },
+    ],
+    outputs: [{ name: "MODEL", type: "MODEL", links: [14] }],
+    widgets_values: ["style.safetensors", 1, 1],
+  });
+  ui.links = ui.links.filter((l) => l[0] !== 1);
+  ui.links.push([13, 1, 0, 11, 0, "MODEL"], [14, 11, 0, 5, 0, "MODEL"]);
+  node(5).inputs[0].link = 14;
+  // A muted extra node is left out.
+  ui.nodes.push({
+    id: 12,
+    type: "SaveImage",
+    mode: 2,
+    inputs: [],
+    widgets_values: ["x"],
+  });
+  const graph = toApiWorkflow(ui, objectInfo);
+  assert.deepEqual(graph["5"].inputs, {
+    model: ["1", 0],
+    seed: 7,
+    steps: 30,
+    cfg: 6.5,
+    sampler_name: "dpmpp_2m",
+    scheduler: "karras",
+    positive: ["2", 0],
+    negative: ["3", 0],
+    latent_image: ["4", 0],
+    denoise: 1,
+  });
+  assert.equal(graph["4"].inputs.width, 1024);
+  assert.deepEqual(graph["7"].inputs.images, ["6", 0]);
+  assert.deepEqual(Object.keys(graph).sort(), [
+    "1",
+    "2",
+    "3",
+    "4",
+    "5",
+    "6",
+    "7",
+  ]);
+  ui.nodes.push({ id: 13, type: "CustomThing", mode: 0, inputs: [] });
+  assert.throws(() => toApiWorkflow(ui, objectInfo), /CustomThing/);
+});
+test("the workflow is shared through ComfyUI's workflow list", async () => {
+  const calls = [];
+  let stored = null;
+  const comfy = new Comfy(cfg, async (url, options = {}) => {
+    const u = new URL(url);
+    calls.push(`${options.method || "GET"} ${u.pathname}${u.search}`);
+    if (u.pathname === "/api/userdata/workflows%2FVideo%20Generate.json") {
+      if (options.method === "POST") {
+        if (stored && u.searchParams.get("overwrite") === "false")
+          return { ok: false, status: 409 };
+        stored = JSON.parse(options.body);
+        return { ok: true, status: 200 };
+      }
+      return stored
+        ? { ok: true, status: 200, json: async () => stored }
+        : { ok: false, status: 404 };
+    }
+    const type = decodeURIComponent(u.pathname.split("/").pop());
+    return { ok: true, json: async () => ({ [type]: objectInfo[type] }) };
+  });
+  assert.equal(await comfy.edited(), null);
+  assert.equal(await comfy.publish(builtInWorkflowUi), true);
+  // The user's edited copy is kept unless a reset asks to overwrite it.
+  stored.nodes.find((n) => n.id === 5).widgets_values[2] = 35;
+  assert.equal(await comfy.publish(builtInWorkflowUi), false);
+  assert.equal((await comfy.edited())["5"].inputs.steps, 35);
+  assert.equal(await comfy.publish(builtInWorkflowUi, true), true);
+  assert.equal((await comfy.edited())["5"].inputs.steps, 20);
+  assert.ok(calls.includes("GET /object_info/KSampler"));
 });
 test("subtitles skip scenes without narration but keep their time slots", () => {
   const text = subtitles([
