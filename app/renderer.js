@@ -1,7 +1,10 @@
 const $ = (id) => document.getElementById(id);
 const fields = [
+  "videoProvider",
   "region",
   "model",
+  "veoModel",
+  "selfHostedUrl",
   "pricePerSecond",
   "budget",
   "ffmpeg",
@@ -72,7 +75,7 @@ function scene(data = {}) {
     data.imagePrompt,
     "imagePrompt",
   );
-  field("textarea", "Wan 镜头动作提示词", data.prompt, "prompt");
+  field("textarea", "镜头动作提示词（Wan / Veo / 自部署通用）", data.prompt, "prompt");
   field(
     "textarea",
     "旁白 / 字幕（每镜头不超过 5 秒）",
@@ -147,14 +150,25 @@ async function refresh() {
 }
 $("save").onclick = () =>
   action(async () => {
-    const value = { key: $("key").value };
+    const value = {
+      key: $("key").value,
+      veoKey: $("veoKey").value,
+      selfHostedKey: $("selfHostedKey").value,
+    };
     for (const f of fields) value[f] = $(f).value;
     value.narration = value.narration === "true";
     await window.studio.saveSettings(value);
     $("key").value = "";
-    $("keyStatus").textContent = (await window.studio.settings()).hasKey
-      ? "Key 已加密保存"
-      : "";
+    $("veoKey").value = "";
+    $("selfHostedKey").value = "";
+    const cfg = await window.studio.settings();
+    $("keyStatus").textContent = [
+      cfg.hasSecret?.wan && "Wan Key 已保存",
+      cfg.hasSecret?.veo && "Veo Key 已保存",
+      cfg.hasSecret?.selfHosted && "自部署密钥已保存",
+    ]
+      .filter(Boolean)
+      .join(" · ");
     status("设置已保存");
   });
 $("checkLocal").onclick = () =>
@@ -178,13 +192,20 @@ $("newProject").onclick = () => {
 $("create").onclick = () =>
   action(async () => {
     const scenes = sceneValues();
+    const needsImage = $("videoProvider").value === "wan";
     if (
       !scenes.length ||
       scenes.some(
-        (s) => !s.prompt || (!s.image && !s.localImage && !s.imagePrompt),
+        (s) =>
+          !s.prompt ||
+          (needsImage && !s.image && !s.localImage && !s.imagePrompt),
       )
     )
-      throw Error("请填写镜头提示词，以及图片网址、本地图片或生图提示词");
+      throw Error(
+        needsImage
+          ? "请填写镜头提示词，以及图片网址、本地图片或生图提示词"
+          : "请填写镜头提示词",
+      );
     if (editing) await window.studio.update(editing, scenes);
     else await window.studio.create({ name: $("name").value, scenes });
     await refresh();
@@ -223,7 +244,13 @@ window.studio.onProgress(status);
 action(async () => {
   const cfg = await window.studio.settings();
   for (const f of fields) $(f).value = String(cfg[f] ?? "");
-  $("keyStatus").textContent = cfg.hasKey ? "Key 已加密保存" : "";
+  $("keyStatus").textContent = [
+    cfg.hasSecret?.wan && "Wan Key 已保存",
+    cfg.hasSecret?.veo && "Veo Key 已保存",
+    cfg.hasSecret?.selfHosted && "自部署密钥已保存",
+  ]
+    .filter(Boolean)
+    .join(" · ");
   scene();
   await refresh();
 });

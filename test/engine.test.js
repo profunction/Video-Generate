@@ -1,6 +1,6 @@
 const { test } = require("node:test");
 const assert = require("node:assert/strict");
-const { Wan, validate, merge, run } = require("../app/engine");
+const { Wan, Veo, SelfHosted, validate, merge, run } = require("../app/engine");
 const fs = require("node:fs/promises");
 const os = require("node:os");
 const path = require("node:path");
@@ -80,6 +80,95 @@ test("failed jobs stop polling", async () => {
     async () => {},
   );
   await assert.rejects(() => wan.poll("task", () => {}), /InvalidImage/);
+});
+test("Veo and self-hosted scenes skip the image/HTTPS-URL requirement", () => {
+  const sceneNoImage = { prompt: "A character walks" };
+  assert.equal(
+    validate(
+      { scenes: [sceneNoImage], reserved: 0 },
+      { ...cfg, videoProvider: "veo", veoModel: "veo-3.1-lite-generate-preview" },
+    ),
+    8 * cfg.pricePerSecond,
+  );
+  assert.equal(
+    validate(
+      { scenes: [sceneNoImage], reserved: 0 },
+      { videoProvider: "selfHosted", selfHostedUrl: "http://127.0.0.1:8081" },
+    ),
+    0,
+  );
+});
+test("validate rejects an invalid self-hosted inference URL", () => {
+  assert.throws(
+    () =>
+      validate(
+        { scenes: [{ prompt: "A character walks" }] },
+        { videoProvider: "selfHosted", selfHostedUrl: "not-a-url" },
+      ),
+    /self-hosted/,
+  );
+});
+test("Veo submits a prediction and returns the operation name", async () => {
+  let calls = 0;
+  const veo = new Veo(
+    { veoModel: "veo-3.1-lite-generate-preview" },
+    "secret",
+    async (url, options) => {
+      calls++;
+      assert.equal(options.headers["x-goog-api-key"], "secret");
+      assert.match(url, /predictLongRunning$/);
+      assert.equal(JSON.parse(options.body).instances[0].prompt, scene.prompt);
+      return {
+        ok: true,
+        json: async () => ({
+          name: "models/veo-3.1-lite-generate-preview/operations/abc123",
+        }),
+      };
+    },
+  );
+  assert.equal(
+    await veo.submit(scene),
+    "models/veo-3.1-lite-generate-preview/operations/abc123",
+  );
+  assert.equal(calls, 1);
+});
+test("Veo poll waits for completion and rejects an untrusted video location", async () => {
+  const veo = new Veo(
+    {},
+    "secret",
+    async () => ({
+      ok: true,
+      json: async () => ({
+        done: true,
+        response: {
+          generateVideoResponse: {
+            generatedSamples: [{ video: { uri: "https://evil.example/video.mp4" } }],
+          },
+        },
+      }),
+    }),
+    async () => {},
+  );
+  await assert.rejects(() => veo.poll("op", () => {}), /unexpected video location/);
+});
+test("self-hosted generation posts the shared secret and streams the response", async () => {
+  let calls = 0;
+  const selfHosted = new SelfHosted(
+    { selfHostedUrl: "http://127.0.0.1:8081" },
+    "shared-secret",
+    async (url, options) => {
+      calls++;
+      assert.equal(url, "http://127.0.0.1:8081/generate");
+      assert.equal(options.headers["X-Inference-Key"], "shared-secret");
+      assert.equal(JSON.parse(options.body).prompt, scene.prompt);
+      return { ok: false, status: 500 };
+    },
+  );
+  await assert.rejects(
+    () => selfHosted.generate(scene, "/tmp/out.mp4"),
+    /Self-hosted video HTTP 500/,
+  );
+  assert.equal(calls, 1);
 });
 test("FFmpeg normalizes and concatenates different frame sizes", async (t) => {
   try {

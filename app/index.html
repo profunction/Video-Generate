@@ -17,7 +17,7 @@
         <h1>Video Generate</h1>
         <p>AI SHORT DRAMA STUDIO · WINDOWS</p>
       </div>
-      <span class="badge">WAN CLOUD</span>
+      <span class="badge">WAN · VEO · SELF-HOSTED</span>
     </header>
     <main>
       <section>
@@ -25,20 +25,52 @@
         <p>无需 NVIDIA 显卡。API Key 使用系统加密保存；Windows 使用 DPAPI。</p>
         <div class="grid">
           <label
-            >API Key<input
+            >视频生成提供方<select id="videoProvider">
+              <option value="wan">阿里云 Wan（云端，按秒计费）</option>
+              <option value="veo">Google Veo（云端，按秒计费）</option>
+              <option value="selfHosted">
+                自部署 Wan2.1 / LTX-Video（你自己的 GPU 服务器）
+              </option>
+            </select></label
+          >
+          <label
+            >Wan API Key<input
               id="key"
               type="password"
               placeholder="输入后加密保存；留空保留现有 Key"
               autocomplete="off"
           /></label>
           <label
-            >API 区域<select id="region">
+            >Wan API 区域<select id="region">
               <option value="china">中国 · 北京</option>
               <option value="international">国际 · 新加坡</option>
             </select></label
           >
-          <label>Wan 模型<input id="model" value="wan2.2-i2v-flash" /></label
+          <label>Wan 模型<input id="model" value="wan2.2-i2v-flash" /></label>
+          <label
+            >Veo（Gemini）API Key<input
+              id="veoKey"
+              type="password"
+              placeholder="输入后加密保存；留空保留现有 Key"
+              autocomplete="off"
+          /></label>
+          <label
+            >Veo 模型<input
+              id="veoModel"
+              value="veo-3.1-lite-generate-preview" /></label
           ><label
+            >自部署推理服务地址<input
+              id="selfHostedUrl"
+              value="http://127.0.0.1:8081"
+              placeholder="你的 Wan2.1 / LTX-Video 推理服务地址" /></label
+          ><label
+            >自部署服务密钥<input
+              id="selfHostedKey"
+              type="password"
+              placeholder="与推理服务 INFERENCE_KEY 一致；留空保留现有密钥"
+              autocomplete="off"
+          /></label>
+          <label
             >每秒价格（按官方当前报价填写）<input
               id="pricePerSecond"
               type="number"
