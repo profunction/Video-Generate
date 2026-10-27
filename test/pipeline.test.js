@@ -257,6 +257,73 @@ test("a continuing scene starts from the previous clip's last frame", async (t) 
   assert.deepEqual(uploaded, [path.join(dir, "frame-2.png")]);
   assert.equal(p.scenes[1].clip, "clip-2.mp4");
 });
+test("Alibaba Cloud draws a missing picture once and a resume collects it", async (t) => {
+  if (!(await ffmpeg(t))) return;
+  const dir = await folder(t);
+  const png = path.join(dir, "drawn.png");
+  await run("ffmpeg", [
+    "-y",
+    "-f",
+    "lavfi",
+    "-i",
+    "color=c=red:s=64x36",
+    "-frames:v",
+    "1",
+    png,
+  ]);
+  const p = { scenes: [{ prompt: "Walk", imagePrompt: "Hero" }], reserved: 0 };
+  let drawn = 0;
+  let pictureState = "FAILED";
+  const wan = wanFake({
+    submitImage: async (prompt) => {
+      drawn++;
+      assert.equal(prompt, "Hero");
+      return "img" + drawn;
+    },
+    poll: async (id, progress, result) => {
+      if (id.startsWith("img")) {
+        if (pictureState === "FAILED") {
+          const error = Error("Task FAILED: DataInspectionFailed");
+          error.taskStatus = "FAILED";
+          throw error;
+        }
+        if (pictureState === "lost") throw new TypeError("fetch failed");
+        return result({ results: [{ url: "https://img.test/a.png" }] });
+      }
+      return "https://video.test/clip.mp4";
+    },
+    upload: async (file) => {
+      assert.equal(file, path.join(dir, "image-0.png"));
+      return "oss://temp/a.png";
+    },
+    submit: async () => {
+      throw Object.assign(Error("stop after picture"), { rejected: true });
+    },
+  });
+  const options = {
+    wan,
+    persist: async () => {},
+    fetcher: async () => new Response(await fs.readFile(png)),
+  };
+  // A failed picture is free, so the task is dropped and drawn again later.
+  await assert.rejects(
+    () => produce(p, dir, cfg, options),
+    /DataInspectionFailed/,
+  );
+  assert.equal(p.scenes[0].imageTask, undefined);
+  // A network error keeps the task, so the next run does not pay for a new picture.
+  pictureState = "lost";
+  await assert.rejects(() => produce(p, dir, cfg, options), /fetch failed/);
+  assert.equal(p.scenes[0].imageTask, "img2");
+  pictureState = "ok";
+  await assert.rejects(
+    () => produce(p, dir, cfg, options),
+    /stop after picture/,
+  );
+  assert.equal(drawn, 2);
+  assert.equal(p.scenes[0].localImage, path.join(dir, "image-0.png"));
+  await fs.access(p.scenes[0].localImage);
+});
 test("a ComfyUI job forgotten after a restart is generated again once", async (t) => {
   const dir = await folder(t);
   const p = { scenes: [{ prompt: "Walk", imagePrompt: "Hero" }], reserved: 0 };

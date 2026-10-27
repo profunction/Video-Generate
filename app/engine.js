@@ -102,7 +102,23 @@ class Wan {
       );
     return data.output.task_id;
   }
-  async poll(id, progress) {
+  // Draws a picture from text with Wan on Alibaba Cloud; billed per image, failed images are free.
+  async submitImage(prompt) {
+    const data = await this.request(
+      "/api/v1/services/aigc/text2image/image-synthesis",
+      {
+        model: this.settings.imageModel || "wan2.2-t2i-flash",
+        input: {
+          prompt,
+          negative_prompt: "blurry, distorted, watermark, text",
+        },
+        parameters: { size: "1280*720", n: 1 },
+      },
+    );
+    if (!data.output?.task_id) throw new Error("Wan returned no image task ID");
+    return data.output.task_id;
+  }
+  async poll(id, progress, result = (out) => out.video_url) {
     for (let i = 0; i < 360; i++) {
       let data;
       for (let attempt = 0; attempt < 4; attempt++) {
@@ -117,8 +133,11 @@ class Wan {
       const out = data.output || {};
       progress(out.task_status || "UNKNOWN");
       if (out.task_status === "SUCCEEDED") {
-        if (!out.video_url) throw new Error("Missing video URL");
-        return out.video_url;
+        const url = result(out);
+        if (url) return url;
+        const error = new Error("Wan returned no result URL");
+        error.noResult = true;
+        throw error;
       }
       if (["FAILED", "CANCELED", "UNKNOWN"].includes(out.task_status)) {
         const error = new Error(
@@ -317,6 +336,7 @@ async function merge(clips, folder, settings) {
   return output;
 }
 module.exports = {
+  ENDPOINTS,
   Wan,
   validate,
   download,

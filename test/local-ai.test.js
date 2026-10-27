@@ -24,6 +24,7 @@ const workflow = {
 const cfg = {
   ollamaUrl: "http://127.0.0.1:11434",
   ollamaModel: "test",
+  textModel: "test-model",
   comfyUrl: "http://127.0.0.1:8188",
   region: "china",
   model: "wan2.2-i2v-flash",
@@ -32,6 +33,9 @@ const cfg = {
   ffmpeg: "ffmpeg",
   ffprobe: "ffprobe",
   narration: false,
+  // These tests cover the local services; cloud mode has its own tests.
+  scriptSource: "ollama",
+  imageSource: "comfyui",
 };
 test("local AI cannot send story data to arbitrary remote hosts", () => {
   assert.equal(localBase(cfg.ollamaUrl), cfg.ollamaUrl);
@@ -100,6 +104,76 @@ test("continuous stories ask for one take without cuts", async () => {
   await storyboard("story", 1, cfg, fetcher);
   assert.match(prompts[0], /continuous take/);
   assert.doesNotMatch(prompts[1], /continuous take/);
+});
+test("in cloud mode Qwen writes the script with the Alibaba Cloud key", async () => {
+  let request;
+  const story = await storyboard(
+    "story",
+    1,
+    { ...cfg, scriptSource: "cloud", region: "international" },
+    async (url, options) => {
+      request = { url, options };
+      return {
+        ok: true,
+        json: async () => ({
+          choices: [
+            {
+              message: {
+                content: JSON.stringify({
+                  title: "T",
+                  scenes: [
+                    { prompt: "Walk", imagePrompt: "Hero", narration: "Hi" },
+                  ],
+                }),
+              },
+            },
+          ],
+        }),
+      };
+    },
+    true,
+    "sk-test",
+  );
+  assert.equal(
+    request.url,
+    "https://dashscope-intl.aliyuncs.com/compatible-mode/v1/chat/completions",
+  );
+  assert.equal(request.options.headers.Authorization, "Bearer sk-test");
+  const body = JSON.parse(request.options.body);
+  assert.equal(body.model, "test-model");
+  assert.deepEqual(body.response_format, { type: "json_object" });
+  assert.match(body.messages[0].content, /continuous take/);
+  assert.equal(story.scenes[0].prompt, "Walk");
+  await assert.rejects(
+    () =>
+      storyboard(
+        "story",
+        1,
+        { ...cfg, scriptSource: "cloud" },
+        async () => ({
+          ok: false,
+          status: 401,
+          json: async () => ({
+            error: { message: "Incorrect API key provided." },
+          }),
+        }),
+        false,
+        "sk-bad",
+      ),
+    /401 \(Incorrect API key provided\.\)/,
+  );
+  await assert.rejects(
+    () => storyboard("story", 1, { ...cfg, scriptSource: "cloud" }),
+    /API Key/,
+  );
+  // Nothing local is checked when Alibaba Cloud does both jobs.
+  assert.equal(
+    await checkServices(
+      { ...cfg, scriptSource: "cloud", imageSource: "cloud" },
+      async () => assert.fail("no local service should be contacted"),
+    ),
+    "",
+  );
 });
 test("local AI errors explain unreachable services and provider replies", async () => {
   await assert.rejects(

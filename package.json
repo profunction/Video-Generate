@@ -1,6 +1,6 @@
 {
   "name": "video-generate",
-  "version": "0.5.1",
+  "version": "0.6.0",
   "description": "Windows short drama storyboard and Wan video studio",
   "author": "profunction",
   "license": "MIT",
@@ -33,6 +33,12 @@
     },
     "asarUnpack": [
       "app/speech.ps1"
+    ],
+    "extraResources": [
+      {
+        "from": "vendor/ffmpeg",
+        "to": "ffmpeg"
+      }
     ]
   }
 }

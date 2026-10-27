@@ -17,9 +17,25 @@ jobs:
       - run: npm ci
       - name: Install FFmpeg and FFprobe
         run: choco install ffmpeg --no-progress -y
+      - name: Bundle FFmpeg into the installer
+        run: |
+          $exe = Get-ChildItem C:\ProgramData\chocolatey\lib\ffmpeg -Recurse -Filter ffmpeg.exe | Select-Object -First 1
+          if (-not $exe) { throw "FFmpeg was not found" }
+          New-Item -ItemType Directory -Force vendor/ffmpeg | Out-Null
+          Copy-Item (Join-Path $exe.DirectoryName ffmpeg.exe), (Join-Path $exe.DirectoryName ffprobe.exe) vendor/ffmpeg/
+          $license = Get-ChildItem (Split-Path $exe.DirectoryName) -Filter LICENSE* | Select-Object -First 1
+          if (-not $license) { throw "FFmpeg license file was not found" }
+          Copy-Item $license.FullName vendor/ffmpeg/LICENSE.txt
       - run: npm test
       - run: npm run test:desktop
       - run: npm run dist:win -- --publish never
+      - name: Check the bundled FFmpeg
+        run: |
+          & dist/win-unpacked/resources/ffmpeg/ffmpeg.exe -version
+          if ($LASTEXITCODE) { throw "bundled ffmpeg failed" }
+          & dist/win-unpacked/resources/ffmpeg/ffprobe.exe -version
+          if ($LASTEXITCODE) { throw "bundled ffprobe failed" }
+          if (-not (Test-Path dist/win-unpacked/resources/ffmpeg/LICENSE.txt)) { throw "FFmpeg license missing" }
       - uses: actions/upload-artifact@v4
         with:
           name: Video-Generate-Windows-x64

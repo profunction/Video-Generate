@@ -1,32 +1,44 @@
 # Video Generate · AI Short Drama Studio
 
-Windows 10/11 x64 Electron 桌面应用，现已接通：
+Windows 10/11 x64 Electron 桌面应用：
 
-**故事创意 → Ollama 剧本与分镜 → ComfyUI 图片 → 阿里云 Wan 视频 → 下载 → FFmpeg → 系统配音 / 字幕 → MP4**
+**故事创意 → 剧本与分镜 → 图片 → 阿里云 Wan 视频 → FFmpeg → 系统配音 / 字幕 → MP4**
 
-ComfyUI 可选；也可以直接选择本地图片或填写 HTTPS 图片网址。云端 Wan 不需要 NVIDIA GPU。本地模型的速度和显存要求取决于所选模型。程序不要求 Docker 或自建云服务器。
+**默认只需要一个阿里云百炼 API Key**：剧本由阿里云通义千问写，图片由阿里云万相画，视频由阿里云 Wan 生成，FFmpeg 已经打包在安装包里。不需要显卡，不用安装 Ollama、ComfyUI 或 FFmpeg，也不用开着任何本地服务；只有生成时需要打开应用。
+
+想免费在本机写剧本或画图（例如想在 ComfyUI 里看和调整画图工作流），可以在设置里把“剧本由谁写”改成本机 Ollama、把“图片由谁画”改成本机 ComfyUI。也可以直接选择本地图片或填写 HTTPS 图片网址。
 
 ## 下载与安装
 
-在仓库的 **Actions → Windows installer → 成功运行 → Artifacts** 下载 `Video-Generate-Windows-x64`，解压并运行 `.exe`。安装包未代码签名。应用可安装到已有版本之上；请先备份项目，默认保留旧配置与数据。
+在仓库的 **Actions → Windows installer → 成功运行 → Artifacts** 下载 `Video-Generate-Windows-x64`，解压并运行 `.exe`。安装包未代码签名。应用可安装到已有版本之上；请先备份项目，默认保留旧配置与数据。安装包自带 FFmpeg / FFprobe（[gyan.dev](https://www.gyan.dev/ffmpeg/builds/) 构建，GPL 许可证见安装目录 `resources/ffmpeg/LICENSE.txt`）。
 
-开发：Node.js 22+，运行 `npm ci`、`npm start`。Windows 打包：`npm run dist:win`。
+开发：Node.js 22+，运行 `npm ci`、`npm start`。用源码运行时不带 FFmpeg，需要自己安装并加入 PATH，或在“高级设置”里填写完整路径。Windows 打包：`npm run dist:win`（把 `ffmpeg.exe`、`ffprobe.exe` 和许可证放进 `vendor/ffmpeg/` 才会打包进去，CI 会自动做这一步）。
 
 ## 首次配置（只需一次）
 
-1. 安装 [Ollama for Windows](https://ollama.com/download/windows)，在终端运行 `ollama pull qwen2.5:7b`。需要 Ollama 0.5 或更新版本（使用结构化 JSON 输出）。模型名称可改成你已有的模型。默认地址 `http://127.0.0.1:11434`。
-2. 可选：安装 [ComfyUI](https://docs.comfy.org/installation/desktop/windows) 与适合电脑的生图模型，启动服务。默认连接地址 `http://127.0.0.1:8188`，以实际启动日志为准。硬件不适合本地生图时，跳过 ComfyUI，使用已有图片。
-3. 用 ComfyUI 画图时，把 SD1.5 模型（例如 [`v1-5-pruned-emaonly-fp16.safetensors`](https://huggingface.co/Comfy-Org/stable-diffusion-v1-5-archive/blob/main/v1-5-pruned-emaonly-fp16.safetensors)）放进 ComfyUI 的 `models/checkpoints`，启动 ComfyUI 即可。应用**自带 SD1.5 画图工作流**（912×512，接近 16:9），会自动使用 ComfyUI 里装好的 SD1.5 模型，不需要导入任何文件。
-   - **在 ComfyUI 里看和调整这个工作流**：点“在 ComfyUI 里调整工作流”，应用会把它放进 ComfyUI 的“工作流”（Workflows）列表并打开 ComfyUI。打开列表里的“Video Generate”，就能看到全部节点（带中文说明），可以改模型、图片大小、步数、CFG、采样器和正负提示词，改完按 Ctrl+S 保存，应用下次画图就用你保存的版本，不需要导出或导入。正向提示词里的 `{{PROMPT}}` 不能删，删了会在付费前提示。暂不支持子图（subgraph），缺少的插件节点会在付费前报出名字。
-   - 想用自己的工作流（例如 SDXL / Flux）：在 ComfyUI 导出 **API 格式 JSON**，把正向提示词替换为 `{{PROMPT}}`，确保包含 `SaveImage` 节点，再点“导入自己的 ComfyUI 工作流（可选）”。只导入可信的工作流，模型和自定义节点须事先安装。工作流里的模型在 ComfyUI 中找不到时，会自动换成已安装的 SD1.5 模型。点“改用内置工作流”可以回到内置工作流，同时把 ComfyUI 里的“Video Generate”恢复成默认设置。使用顺序：导入的工作流 → ComfyUI 里保存的“Video Generate” → 内置工作流。[示例工作流](examples/comfy-sd15-api.json)与内置工作流相同。
-4. 安装 [FFmpeg](https://www.gyan.dev/ffmpeg/builds/)，把 FFmpeg 和 FFprobe 加入 PATH，或在应用填写两个 `.exe` 的完整路径。
-5. 在应用填写阿里云百炼 / DashScope API Key、相匹配的北京或新加坡区域及该区域可用的 Wan 模型。默认 `wan2.2-i2v-flash`，固定请求 5 秒、720P。按官方当前报价填写每秒价格和项目预算，币种相同。价格默认 0，未填写前无法付费生成。
-6. 按需开启“Windows 配音”。系统须安装相应语言的传统 SAPI 桌面语音；Windows 设置中的部分自然语音不支持 System.Speech。语音名称可留空使用默认语音，或填写已安装的 SAPI 名称；名称填错时，错误提示会列出本机已安装的语音。每镜头旁白须短于 5 秒，过长时程序会提示编辑，不会静默裁切。
-7. 点击“保存设置”，再点击“检测 Ollama / ComfyUI / FFmpeg”，它会先保存屏幕上的设置，再检查服务连接、Ollama 模型是否已拉取、用的是哪个工作流以及会用哪个 ComfyUI 模型，还有 FFmpeg / FFprobe 能否启动。地址填错时，如果 Ollama 或 ComfyUI 正在常用地址（11434 / 8188 / 8000）上运行，会直接提示正确地址。应用连接这些已安装的服务；**安装包不包含 Ollama、ComfyUI、模型、FFmpeg**，不会自动下载大型模型。
+1. 登录[阿里云百炼控制台](https://bailian.console.aliyun.com/)，创建 API Key，记下它属于北京还是新加坡地域。
+2. 在应用的“01 / 设置”里填写 API Key，选择与 Key 一致的地域，按控制台当前报价填写**视频每秒价格**和**每个项目预算**（币种相同）。价格默认 0，未填写前无法付费生成视频。
+3. “剧本由谁写”和“图片由谁画”保持“阿里云”即可。按需开启“Windows 配音”。
+4. 点“检测设置”。它会先保存屏幕上的设置，再检查 API Key 是否已保存、FFmpeg / FFprobe 能否启动；选了本机 Ollama / ComfyUI 时，还会检查它们的连接、模型和工作流。
+
+**费用**：视频按秒计费，每次付费生成前都会弹出确认并检查预算。用阿里云画图时按张计费（`wan2.2-t2i-flash` 北京地域为 0.14 元/张，失败不收费，以[百炼价格页](https://help.aliyun.com/zh/model-studio/model-pricing)为准），付费确认框里会写明要画几张图；连续模式只需要画第 1 个镜头。用阿里云写剧本按 token 计费，每次用量很少。
+
+**Windows 配音**：系统须安装相应语言的传统 SAPI 桌面语音（中文 Windows 一般自带）；Windows 设置中的部分自然语音不支持 System.Speech。语音名称可留空使用默认语音，或填写已安装的 SAPI 名称；名称填错时，错误提示会列出本机已安装的语音。每镜头旁白须短于 5 秒，过长时程序会提示编辑，不会静默裁切。
+
+### 可选：本机 Ollama 写剧本
+
+安装 [Ollama for Windows](https://ollama.com/download/windows)，在终端运行 `ollama pull qwen2.5:7b`（需要 Ollama 0.5 或更新版本）。在设置里把“剧本由谁写”改成“本机 Ollama”，默认地址 `http://127.0.0.1:11434`。
+
+### 可选：本机 ComfyUI 画图（可以看和调整工作流）
+
+1. 安装 [ComfyUI](https://docs.comfy.org/installation/desktop/windows)，把 SD1.5 模型（例如 [`v1-5-pruned-emaonly-fp16.safetensors`](https://huggingface.co/Comfy-Org/stable-diffusion-v1-5-archive/blob/main/v1-5-pruned-emaonly-fp16.safetensors)）放进 ComfyUI 的 `models/checkpoints`，启动 ComfyUI。在设置里把“图片由谁画”改成“本机 ComfyUI”，填写 ComfyUI 启动后显示的地址（默认 `http://127.0.0.1:8188`）。应用**自带 SD1.5 画图工作流**（912×512，接近 16:9），会自动使用 ComfyUI 里装好的 SD1.5 模型，不需要导入任何文件。
+2. **在 ComfyUI 里看和调整这个工作流**：点“在 ComfyUI 里看和调整工作流”，应用会把它放进 ComfyUI 的“工作流”（Workflows）列表并打开 ComfyUI。打开列表里的“Video Generate”，就能看到全部节点（带中文说明），可以改模型、图片大小、步数、CFG、采样器和正负提示词，改完按 Ctrl+S 保存，应用下次画图就用你保存的版本，不需要导出或导入。正向提示词里的 `{{PROMPT}}` 不能删，删了会在付费前提示。暂不支持子图（subgraph），缺少的插件节点会在付费前报出名字。
+3. 想用自己的工作流（例如 SDXL / Flux）：在 ComfyUI 导出 **API 格式 JSON**，把正向提示词替换为 `{{PROMPT}}`，确保包含 `SaveImage` 节点，再点“导入自己的 ComfyUI 工作流（可选）”。只导入可信的工作流，模型和自定义节点须事先安装。工作流里的模型在 ComfyUI 中找不到时，会自动换成已安装的 SD1.5 模型。点“改用内置工作流”可以回到内置工作流，同时把 ComfyUI 里的“Video Generate”恢复成默认设置。使用顺序：导入的工作流 → ComfyUI 里保存的“Video Generate” → 内置工作流。[示例工作流](examples/comfy-sd15-api.json)与内置工作流相同。
+4. 检测时，如果 Ollama 或 ComfyUI 的地址填错，但它们正在常用地址（11434 / 8188 / 8000）上运行，会直接提示正确地址。
 
 ## 一键生成
 
-输入故事创意和镜头数量，点击“一键生成完整短剧”。应用自动调用 Ollama、保存项目，然后连接 ComfyUI 逐镜头生图并上传，接着调用 Wan、下载视频、合并并导出字幕与可选配音。**每次提交新的付费 Wan 任务前必须在原生对话框明确批准**；取消则不会上传图片或提交新视频任务。Ollama 剧本生成属于本地操作，不需要 Wan Key。
+输入故事创意和镜头数量，点击“一键生成完整短剧”。应用自动写剧本、保存项目，然后为需要的镜头画图并上传，接着调用 Wan、下载视频、合并并导出字幕与可选配音。**每次提交新的付费 Wan 任务前必须在原生对话框明确批准**；取消则不会上传图片或提交新视频任务。用本机 Ollama 写剧本时不需要 Key；用阿里云写剧本需要先保存 Key。
 
 也可以点击“生成剧本并编辑”，检查人物、提示词和旁白后保存项目，再“生成 / 恢复”。手动路径可使用图片网址或“选择本地图片”（PNG / JPEG），本地图片复制到项目内保存，长边超过 1920 像素时自动缩小；空图片配合生图提示词会使用 ComfyUI。CPU 上用 Ollama 写长剧本可能需要几分钟，最长等待 15 分钟。
 

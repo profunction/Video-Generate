@@ -2,6 +2,10 @@ const $ = (id) => document.getElementById(id);
 const fields = [
   "region",
   "model",
+  "scriptSource",
+  "imageSource",
+  "textModel",
+  "imageModel",
   "pricePerSecond",
   "budget",
   "ffmpeg",
@@ -284,10 +288,20 @@ $("automatic").onclick = () =>
     await refresh();
     await runProject(project.id);
   });
+// Show the Ollama and ComfyUI settings only when the local option is chosen.
+function syncSources() {
+  for (const el of document.querySelectorAll(".ollama-only"))
+    el.hidden = $("scriptSource").value !== "ollama";
+  for (const el of document.querySelectorAll(".comfy-only"))
+    el.hidden = $("imageSource").value !== "comfyui";
+}
+$("scriptSource").onchange = syncSources;
+$("imageSource").onchange = syncSources;
 window.studio.onProgress(status);
 action(async () => {
   const cfg = await window.studio.settings();
   for (const f of fields) $(f).value = String(cfg[f] ?? "");
+  syncSources();
   $("keyStatus").textContent = cfg.hasKey ? "Key 已加密保存" : "";
   scene();
   await refresh();

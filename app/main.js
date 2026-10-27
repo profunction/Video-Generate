@@ -37,6 +37,11 @@ const defaults = {
   comfyUrl: "http://127.0.0.1:8188",
   narration: false,
   voice: "",
+  // Alibaba Cloud writes the script and draws pictures, so a key is all a customer needs.
+  scriptSource: "cloud",
+  imageSource: "cloud",
+  textModel: "qwen-plus",
+  imageModel: "wan2.2-t2i-flash",
 };
 const root = () => app.getPath("userData");
 const text = (value) => String(value ?? "").trim();
@@ -77,11 +82,21 @@ const SOURCES = {
   comfyui: "Video Generate (edited in ComfyUI)",
   "built-in": "built-in SD1.5",
 };
-async function settings() {
+async function saved() {
   return {
     ...defaults,
     ...(await read(path.join(root(), "settings.json"), {})),
   };
+}
+// The installer ships FFmpeg; a path the user entered still wins.
+async function settings() {
+  const cfg = await saved();
+  if (app.isPackaged)
+    for (const tool of ["ffmpeg", "ffprobe"]) {
+      const shipped = path.join(process.resourcesPath, "ffmpeg", `${tool}.exe`);
+      if (cfg[tool] === tool && (await exists(shipped))) cfg[tool] = shipped;
+    }
+  return cfg;
 }
 async function readKey() {
   let data;
@@ -148,7 +163,7 @@ app.whenReady().then(async () => {
   win.webContents.setWindowOpenHandler(() => ({ action: "deny" }));
   win.webContents.on("will-navigate", (e) => e.preventDefault());
   ipcMain.handle("settings:get", async () => ({
-    ...(await settings()),
+    ...(await saved()),
     hasKey: await exists(path.join(root(), "key.bin")),
   }));
   ipcMain.handle("settings:save", async (_, value) => {
@@ -230,23 +245,33 @@ app.whenReady().then(async () => {
   });
   ipcMain.handle("local:check", async () => {
     const cfg = await settings();
-    const report = [await checkServices(cfg)];
-    let line = "ComfyUI workflow: ";
-    try {
-      const flow = await workflow(cfg);
-      line += SOURCES[flow.source];
+    const report = [await checkServices(cfg)].filter(Boolean);
+    if (cfg.scriptSource === "cloud" || cfg.imageSource === "cloud")
+      report.push(
+        ((await exists(path.join(root(), "key.bin")))
+          ? "阿里云：API Key 已保存"
+          : "阿里云：还没有保存 API Key，请在上面填写后点保存设置") +
+          (cfg.scriptSource === "cloud" ? ` · 剧本 ${cfg.textModel}` : "") +
+          (cfg.imageSource === "cloud" ? ` · 图片 ${cfg.imageModel}` : ""),
+      );
+    if (cfg.imageSource !== "cloud") {
+      let line = "ComfyUI workflow: ";
       try {
-        const used = await new Comfy(cfg).ready(flow.graph);
-        if (used.length) line += ` · model ${used.join(", ")}`;
+        const flow = await workflow(cfg);
+        line += SOURCES[flow.source];
+        try {
+          const used = await new Comfy(cfg).ready(flow.graph);
+          if (used.length) line += ` · model ${used.join(", ")}`;
+        } catch (e) {
+          // The ComfyUI line above already reports an unreachable service.
+          if (!/Cannot reach|timed out/.test(e.message))
+            line += ` · ${e.message}`;
+        }
       } catch (e) {
-        // The ComfyUI line above already reports an unreachable service.
-        if (!/Cannot reach|timed out/.test(e.message))
-          line += ` · ${e.message}`;
+        line += e.message;
       }
-    } catch (e) {
-      line += e.message;
+      report.push(line);
     }
-    report.push(line);
     for (const [name, binary] of [
       ["FFmpeg", cfg.ffmpeg],
       ["FFprobe", cfg.ffprobe],
@@ -263,13 +288,16 @@ app.whenReady().then(async () => {
     if (busy) throw Error("Another operation is running");
     busy = true;
     try {
-      emit("Ollama 正在生成剧本…");
+      const cfg = await settings();
+      const cloud = cfg.scriptSource === "cloud";
+      emit(cloud ? "阿里云正在写剧本…" : "Ollama 正在生成剧本…");
       return await storyboard(
         idea,
         Number(count),
-        await settings(),
+        cfg,
         fetch,
         Boolean(continuous),
+        cloud ? await readKey() : "",
       );
     } finally {
       busy = false;
@@ -391,15 +419,18 @@ app.whenReady().then(async () => {
       const estimate = validate(p, cfg);
       await run(cfg.ffmpeg, ["-version"]);
       await run(cfg.ffprobe, ["-version"]);
-      const needsComfy = p.scenes.some(
+      // Scenes whose first frame still has to be drawn, by ComfyUI or Alibaba Cloud.
+      const pictures = p.scenes.filter(
         (s, i) =>
           !s.taskId &&
           !s.clip &&
           !s.localImage &&
           !s.image &&
           !(i > 0 && s.continuePrevious),
-      );
-      const graph = needsComfy ? (await workflow(cfg)).graph : null;
+      ).length;
+      const cloudPictures = cfg.imageSource === "cloud" ? pictures : 0;
+      const graph =
+        pictures && !cloudPictures ? (await workflow(cfg)).graph : null;
       // Check ComfyUI and its model before the approval dialog, so nothing is paid for first.
       if (graph) {
         emit("正在检查 ComfyUI 和模型…");
@@ -421,7 +452,7 @@ app.whenReady().then(async () => {
           cancelId: 0,
           title: "确认付费生成",
           message: `提交 ${count} 个付费 Wan 视频任务？`,
-          detail: `预计新增费用：${estimate.toFixed(2)}。本项目已预留：${Number(p.reserved || 0).toFixed(2)}。预算：${cfg.budget}。本地或 ComfyUI 图片会上传到阿里云临时存储（有效期 48 小时）。所有金额使用你填写的单价币种；估算不代表实际账单，请核对阿里云当前报价。`,
+          detail: `预计新增视频费用：${estimate.toFixed(2)}。本项目已预留：${Number(p.reserved || 0).toFixed(2)}。预算：${cfg.budget}。${cloudPictures ? `另外会用阿里云画 ${cloudPictures} 张图，按张计费（失败不收费，价格见百炼控制台）。` : ""}图片会上传到阿里云临时存储（有效期 48 小时）。所有金额使用你填写的单价币种；估算不代表实际账单，请核对阿里云当前报价。`,
         });
         if (result.response !== 1) return { canceled: true };
       }

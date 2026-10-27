@@ -164,6 +164,46 @@ test("failed jobs stop polling", async () => {
     (e) => /InvalidImage/.test(e.message) && e.taskStatus === "FAILED",
   );
 });
+test("cloud pictures use the text-to-image task and its result URL", async () => {
+  const requests = [];
+  const wan = new Wan(
+    { ...cfg, imageModel: "wan2.2-t2i-flash" },
+    "secret",
+    async (url, options) => {
+      requests.push({ url, options });
+      if (options.method === "POST")
+        return {
+          ok: true,
+          json: async () => ({ output: { task_id: "img1" } }),
+        };
+      return {
+        ok: true,
+        json: async () => ({
+          output: {
+            task_status: "SUCCEEDED",
+            results: [{ url: "https://img.test/a.png" }],
+          },
+        }),
+      };
+    },
+    async () => {},
+  );
+  assert.equal(await wan.submitImage("a clockmaker"), "img1");
+  const body = JSON.parse(requests[0].options.body);
+  assert.match(requests[0].url, /\/text2image\/image-synthesis$/);
+  assert.equal(requests[0].options.headers["X-DashScope-Async"], "enable");
+  assert.equal(body.model, "wan2.2-t2i-flash");
+  assert.equal(body.input.prompt, "a clockmaker");
+  assert.equal(body.parameters.size, "1280*720");
+  assert.equal(
+    await wan.poll(
+      "img1",
+      () => {},
+      (out) => out.results[0].url,
+    ),
+    "https://img.test/a.png",
+  );
+});
 test("tools resolve with stdout only and fail with their own message", async () => {
   assert.equal(
     await run(process.execPath, [

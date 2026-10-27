@@ -1,6 +1,7 @@
 const fs = require("node:fs/promises");
 const path = require("node:path");
 const crypto = require("node:crypto");
+const { ENDPOINTS } = require("./engine");
 // Used when no workflow was imported; the checkpoint is matched to ComfyUI's models.
 const builtInWorkflow = require("./sd15-workflow.json");
 // The same graph as ComfyUI shows it, placed in ComfyUI's workflow list for editing.
@@ -134,12 +135,52 @@ async function json(url, options = {}, fetcher = fetch) {
   }
   return r.json();
 }
+// Writes the script with Qwen on Alibaba Cloud, using the same key as Wan.
+async function cloudChat(cfg, key, messages, fetcher) {
+  const base = ENDPOINTS[cfg.region];
+  if (!base) throw Error("Invalid Wan region or model");
+  if (!key) throw Error("请先在设置中保存阿里云 API Key");
+  let r;
+  try {
+    r = await fetcher(base + "/compatible-mode/v1/chat/completions", {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${key}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        model: cfg.textModel || "qwen-plus",
+        messages,
+        response_format: { type: "json_object" },
+      }),
+      signal: AbortSignal.timeout(5 * 60000),
+    });
+  } catch (e) {
+    throw Error(
+      e.name === "TimeoutError"
+        ? "Alibaba Cloud took too long to write the script; try again"
+        : "Cannot reach Alibaba Cloud; check the network",
+    );
+  }
+  if (!r.ok) {
+    let detail = "";
+    try {
+      const data = await r.json();
+      detail = data.error?.message || data.message || "";
+    } catch {}
+    throw Error(
+      `Qwen HTTP ${r.status}${detail ? ` (${String(detail).slice(0, 300)})` : ""}. Check region, key and account balance.`,
+    );
+  }
+  return (await r.json()).choices?.[0]?.message?.content;
+}
 async function storyboard(
   idea,
   count,
   cfg,
   fetcher = fetch,
   continuous = false,
+  key = "",
 ) {
   if (
     typeof idea !== "string" ||
@@ -150,59 +191,66 @@ async function storyboard(
     count > 20
   )
     throw Error("Enter a story idea and 1–20 scenes");
-  const text = { type: "string" };
-  const data = await json(
-    localBase(cfg.ollamaUrl) + "/api/chat",
+  const messages = [
     {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      // CPU-only machines can need many minutes for a long screenplay.
-      signal: AbortSignal.timeout(15 * 60000),
-      body: JSON.stringify({
-        model: cfg.ollamaModel,
-        stream: false,
-        format: {
-          type: "object",
-          properties: {
-            title: text,
-            scenes: {
-              type: "array",
-              minItems: count,
-              maxItems: count,
-              items: {
-                type: "object",
-                properties: {
-                  prompt: text,
-                  imagePrompt: text,
-                  narration: text,
+      role: "system",
+      content: `Write a coherent short drama in exactly ${count} scenes, each 5 seconds. ${continuous ? "The scenes form one continuous take in a single location: each scene's video starts from the last frame of the previous scene, so describe only what happens next, with no cuts, time jumps or location changes. " : ""}Return JSON only: {"title":"...","scenes":[{"prompt":"English camera movement and action, max 1800 characters","imagePrompt":"English detailed still image prompt; repeat consistent character appearances and style in every scene","narration":"very short spoken line in the user's language, max 15 Chinese characters or 8 English words"}]}. No markdown. Keep characters consistent, give the story a beginning, conflict and ending.`,
+    },
+    { role: "user", content: idea },
+  ];
+  let content;
+  if (cfg.scriptSource === "cloud")
+    content = await cloudChat(cfg, key, messages, fetcher);
+  else {
+    const text = { type: "string" };
+    const data = await json(
+      localBase(cfg.ollamaUrl) + "/api/chat",
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        // CPU-only machines can need many minutes for a long screenplay.
+        signal: AbortSignal.timeout(15 * 60000),
+        body: JSON.stringify({
+          model: cfg.ollamaModel,
+          stream: false,
+          format: {
+            type: "object",
+            properties: {
+              title: text,
+              scenes: {
+                type: "array",
+                minItems: count,
+                maxItems: count,
+                items: {
+                  type: "object",
+                  properties: {
+                    prompt: text,
+                    imagePrompt: text,
+                    narration: text,
+                  },
+                  required: ["prompt", "imagePrompt", "narration"],
                 },
-                required: ["prompt", "imagePrompt", "narration"],
               },
             },
+            required: ["title", "scenes"],
           },
-          required: ["title", "scenes"],
-        },
-        // The default context window truncates long screenplays into invalid JSON.
-        options: { num_ctx: 8192 },
-        messages: [
-          {
-            role: "system",
-            content: `Write a coherent short drama in exactly ${count} scenes, each 5 seconds. ${continuous ? "The scenes form one continuous take in a single location: each scene's video starts from the last frame of the previous scene, so describe only what happens next, with no cuts, time jumps or location changes. " : ""}Return JSON only: {"title":"...","scenes":[{"prompt":"English camera movement and action, max 1800 characters","imagePrompt":"English detailed still image prompt; repeat consistent character appearances and style in every scene","narration":"very short spoken line in the user's language, max 15 Chinese characters or 8 English words"}]}. No markdown. Keep characters consistent, give the story a beginning, conflict and ending.`,
-          },
-          { role: "user", content: idea },
-        ],
-      }),
-    },
-    fetcher,
-  );
+          // The default context window truncates long screenplays into invalid JSON.
+          options: { num_ctx: 8192 },
+          messages,
+        }),
+      },
+      fetcher,
+    );
+    content = data.message?.content;
+  }
   let parsed;
   try {
-    parsed = JSON.parse(data.message?.content);
+    parsed = JSON.parse(content);
   } catch {
-    throw Error("Ollama returned invalid JSON; try a stronger model");
+    throw Error("The script came back as invalid JSON; generate it again");
   }
   if (!Array.isArray(parsed?.scenes) || parsed.scenes.length < count)
-    throw Error("Ollama scene count mismatch; retry script generation");
+    throw Error("Script scene count mismatch; generate it again");
   const scenes = parsed.scenes.slice(0, count);
   for (const s of scenes) {
     for (const field of ["prompt", "imagePrompt", "narration"])
@@ -211,7 +259,7 @@ async function storyboard(
         !s[field].trim() ||
         s[field].length > 2000
       )
-        throw Error("Ollama returned incomplete scenes");
+        throw Error("The script has incomplete scenes; generate it again");
   }
   return {
     name: String(parsed.title || "AI Drama").slice(0, 100),
@@ -428,14 +476,21 @@ class Comfy {
 }
 async function checkServices(cfg, fetcher = fetch) {
   const report = [];
+  // Services replaced by Alibaba Cloud in the settings are not checked.
   for (const [name, base, route, usual] of [
-    ["Ollama", cfg.ollamaUrl, "/api/tags", ["http://127.0.0.1:11434"]],
-    [
-      "ComfyUI",
-      cfg.comfyUrl,
-      "/system_stats",
-      ["http://127.0.0.1:8188", "http://127.0.0.1:8000"],
-    ],
+    ...(cfg.scriptSource === "cloud"
+      ? []
+      : [["Ollama", cfg.ollamaUrl, "/api/tags", ["http://127.0.0.1:11434"]]]),
+    ...(cfg.imageSource === "cloud"
+      ? []
+      : [
+          [
+            "ComfyUI",
+            cfg.comfyUrl,
+            "/system_stats",
+            ["http://127.0.0.1:8188", "http://127.0.0.1:8000"],
+          ],
+        ]),
   ]) {
     try {
       const out = await json(localBase(base) + route, {}, fetcher);

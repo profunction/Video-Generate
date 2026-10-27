@@ -48,20 +48,46 @@ async function produce(
         );
       } else if (!s.localImage && !s.image) {
         const target = path.join(folder, `image-${i}.png`);
-        for (let attempt = 0; ; attempt++) {
-          if (!s.comfyId) {
-            emit(`ComfyUI：正在生成镜头 ${n} 的图片…`);
-            s.comfyId = await comfy.submit(workflow, s.imagePrompt);
+        if (comfy)
+          for (let attempt = 0; ; attempt++) {
+            if (!s.comfyId) {
+              emit(`ComfyUI：正在生成镜头 ${n} 的图片…`);
+              s.comfyId = await comfy.submit(workflow, s.imagePrompt);
+              await persist();
+            }
+            try {
+              await comfy.image(s.comfyId, target);
+              break;
+            } catch (e) {
+              // Local generation is free: resubmit once if a restarted ComfyUI forgot the job.
+              if (!e.lost || attempt) throw e;
+              delete s.comfyId;
+            }
+          }
+        else {
+          // Alibaba Cloud draws the picture. The task ID is saved first, so a resume
+          // collects the same picture instead of paying for another one.
+          if (!s.imageTask) {
+            emit(`阿里云正在画镜头 ${n} 的图片…`);
+            s.imageTask = await wan.submitImage(s.imagePrompt);
             await persist();
           }
+          let url;
           try {
-            await comfy.image(s.comfyId, target);
-            break;
+            url = await wan.poll(
+              s.imageTask,
+              (status) => emit(`镜头 ${n} 的图片：${status}`),
+              (out) => out.results?.find((r) => r.url)?.url,
+            );
           } catch (e) {
-            // Local generation is free: resubmit once if a restarted ComfyUI forgot the job.
-            if (!e.lost || attempt) throw e;
-            delete s.comfyId;
+            // A failed picture is not billed and an expired task cannot be collected: draw it again next time.
+            if (e.taskStatus || e.noResult) {
+              delete s.imageTask;
+              await persist();
+            }
+            throw e;
           }
+          await download(url, target, fetcher);
         }
         s.localImage = source = target;
         await persist();
