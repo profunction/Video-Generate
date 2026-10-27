@@ -379,8 +379,12 @@ function validate(project, settings) {
     !/^cogvideox[\w.-]*$/i.test(settings.zhipuModel || "")
   )
     throw new Error("Invalid Zhipu model");
-  // Free and self-hosted providers can also work from the prompt alone.
-  const textOnly = provider === "selfHosted" || provider === "zhipu";
+  // Free and self-hosted providers can also work from the prompt alone, and so can
+  // Veo when no pictures are drawn.
+  const textOnly =
+    provider === "selfHosted" ||
+    provider === "zhipu" ||
+    (provider === "veo" && settings.imageSource === "none");
   if (provider === "selfHosted") {
     let url;
     try {
@@ -403,13 +407,13 @@ function validate(project, settings) {
       scene.prompt.length > 2000
     )
       throw new Error("Each scene needs a prompt of at most 2000 characters");
-    if (
-      textOnly ||
-      scene.localImage ||
-      (i > 0 && scene.continuePrevious) ||
-      (!scene.image && scene.imagePrompt)
-    )
+    if (textOnly || scene.localImage || (i > 0 && scene.continuePrevious))
       continue;
+    if (!scene.image && settings.imageSource === "none")
+      throw new Error(
+        `镜头 ${i + 1} 没有图片，阿里云 Wan 要有图片才能生成视频。请把“图片由谁画”改成阿里云万相或本机 ComfyUI，或给这个镜头选择本地图片。`,
+      );
+    if (!scene.image && scene.imagePrompt) continue;
     let url;
     try {
       url = new URL(scene.image);
@@ -420,8 +424,9 @@ function validate(project, settings) {
       throw new Error("Use public HTTPS image URLs");
   }
   const pending = project.scenes.filter((s) => !s.taskId && !s.clip).length;
-  // Resuming or re-exporting submitted scenes spends nothing new; your own server is not billed here.
-  if (!pending || textOnly) return 0;
+  // Resuming or re-exporting submitted scenes spends nothing new; Zhipu's free model and
+  // your own server are not billed here.
+  if (!pending || !CLIP_SECONDS[provider]) return 0;
   const rate = Number(settings.pricePerSecond),
     budget = Number(settings.budget);
   if (

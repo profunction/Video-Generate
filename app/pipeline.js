@@ -71,7 +71,12 @@ async function produce(
           path.join(folder, `frame-${n}.png`),
           cfg,
         );
-      } else if (!s.localImage && !s.image && s.imagePrompt) {
+      } else if (
+        !s.localImage &&
+        !s.image &&
+        s.imagePrompt &&
+        cfg.imageSource !== "none"
+      ) {
         const target = path.join(folder, `image-${i}.png`);
         if (comfy)
           for (let attempt = 0; ; attempt++) {

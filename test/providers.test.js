@@ -367,3 +367,49 @@ test("a Zhipu scene keeps its clip length and a lost response does not block it"
   assert.equal(p.scenes[0].seconds, 6);
   assert.equal(p.reserved, 0);
 });
+test("without drawn pictures Zhipu and Veo work from text, Veo stays billed and Wan asks for a picture", () => {
+  const drawn = {
+    scenes: [{ prompt: "Walk", imagePrompt: "a man" }],
+    reserved: 0,
+  };
+  const none = { imageSource: "none" };
+  assert.equal(validate(drawn, { ...zhipuCfg, ...none }), 0);
+  assert.equal(validate(drawn, { ...veoCfg, ...none }), 4);
+  assert.throws(
+    () => validate(drawn, { ...cfg, ...none }),
+    /镜头 1 没有图片，阿里云 Wan 要有图片/,
+  );
+  const pictured = {
+    scenes: [{ prompt: "Walk", image: "https://example.com/a.png" }],
+    reserved: 0,
+  };
+  assert.equal(validate(pictured, { ...cfg, ...none }), 2.5);
+});
+test("a picture prompt is not drawn when the settings say not to draw", async (t) => {
+  if (!(await ffmpeg(t))) return;
+  const dir = await folder(t);
+  const source = await clip(path.join(dir, "source.mp4"), 2);
+  const p = { scenes: [{ prompt: "Walk", imagePrompt: "a man" }], reserved: 0 };
+  const sent = [];
+  const zhipu = {
+    submit: async (scene, file) => {
+      sent.push(file);
+      return "task-3";
+    },
+    poll: async () => "https://cdn.bigmodel.cn/v.mp4",
+  };
+  await produce(
+    p,
+    dir,
+    { ...zhipuCfg, imageSource: "none" },
+    {
+      wan: null,
+      video: zhipu,
+      persist: async () => {},
+      fetcher: async () => new Response(await fs.readFile(source)),
+    },
+  );
+  assert.deepEqual(sent, [undefined]);
+  assert.equal(p.scenes[0].localImage, undefined);
+  assert.equal(p.scenes[0].clip, "clip-1.mp4");
+});

@@ -479,12 +479,12 @@ class Comfy {
 }
 async function checkServices(cfg, fetcher = fetch) {
   const report = [];
-  // Services replaced by Alibaba Cloud in the settings are not checked.
+  // Services replaced by Alibaba Cloud, or not used at all, are not checked.
   for (const [name, base, route, usual] of [
     ...(cfg.scriptSource === "cloud"
       ? []
       : [["Ollama", cfg.ollamaUrl, "/api/tags", ["http://127.0.0.1:11434"]]]),
-    ...(cfg.imageSource === "cloud"
+    ...(cfg.imageSource !== "comfyui"
       ? []
       : [
           [

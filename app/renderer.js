@@ -248,20 +248,28 @@ $("newProject").onclick = () => {
 $("create").onclick = () =>
   action(async () => {
     const scenes = sceneValues();
+    const provider = $("videoProvider").value,
+      drawing = $("imageSource").value !== "none";
+    // Zhipu, a self-hosted server, and Veo without drawn pictures also work from text.
+    const textOnly =
+      ["selfHosted", "zhipu"].includes(provider) ||
+      (provider === "veo" && !drawing);
     if (
       !scenes.length ||
       scenes.some(
         (s) =>
           !s.prompt ||
-          (!["selfHosted", "zhipu"].includes($("videoProvider").value) &&
+          (!textOnly &&
             !s.continuePrevious &&
             !s.image &&
             !s.localImage &&
-            !s.imagePrompt),
+            !(drawing && s.imagePrompt)),
       )
     )
       throw Error(
-        "请填写镜头提示词；第 1 个镜头和不接上一镜头的镜头还需要图片网址、本地图片或生图提示词",
+        drawing
+          ? "请填写镜头提示词；第 1 个镜头和不接上一镜头的镜头还需要图片网址、本地图片或生图提示词"
+          : "请填写镜头提示词；“图片由谁画”选了不画图，阿里云 Wan 的第 1 个镜头和不接上一镜头的镜头需要图片网址或本地图片",
       );
     if (editing) await window.studio.update(editing, scenes);
     else await window.studio.create({ name: $("name").value, scenes });

@@ -319,7 +319,7 @@ app.whenReady().then(async () => {
           (cfg.scriptSource === "cloud" ? ` · 剧本 ${cfg.textModel}` : "") +
           (cfg.imageSource === "cloud" ? ` · 图片 ${cfg.imageModel}` : ""),
       );
-    if (cfg.imageSource !== "cloud" && provider !== "selfHosted") {
+    if (cfg.imageSource === "comfyui" && provider !== "selfHosted") {
       let line = "ComfyUI workflow: ";
       try {
         const flow = await workflow(cfg);
@@ -500,6 +500,7 @@ app.whenReady().then(async () => {
       const pictures = p.scenes.filter(
         (s, i) =>
           provider !== "selfHosted" &&
+          cfg.imageSource !== "none" &&
           s.imagePrompt &&
           !s.taskId &&
           !s.clip &&
