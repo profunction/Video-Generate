@@ -355,8 +355,9 @@ app.whenReady().then(async () => {
     try {
       const cfg = await settings();
       const cloud = cfg.scriptSource === "cloud";
-      emit(cloud ? "阿里云正在写剧本…" : "Ollama 正在生成剧本…");
       const key = cloud ? await readKey() : "";
+      emit(cloud ? "阿里云正在写剧本…" : "Ollama 正在生成剧本…");
+      let shown = 0;
       try {
         return await storyboard(
           idea,
@@ -365,12 +366,22 @@ app.whenReady().then(async () => {
           fetch,
           Boolean(continuous),
           key,
+          // A local model on a CPU can write for minutes; show that it is still going.
+          (written) => {
+            if (Date.now() - shown < 1000) return;
+            shown = Date.now();
+            emit(`Ollama 正在写剧本…已经写了 ${written} 个字符`);
+          },
         );
       } catch (e) {
         // Customers rarely run Ollama on purpose: say how to switch to the cloud instead.
-        if (!cloud && /Cannot reach|timed out/.test(e.message))
+        if (!cloud && /Cannot reach/.test(e.message))
           throw Error(
             `连不上本机 Ollama（${cfg.ollamaUrl}）。不想安装 Ollama：在“01 / 设置”把“剧本由谁写”改成“阿里云通义千问”，点保存设置后再生成剧本。要用 Ollama：先启动它，默认地址是 http://127.0.0.1:11434。`,
+          );
+        if (!cloud && /timed out/.test(e.message))
+          throw Error(
+            "Ollama 写剧本太久，超时了。可以在设置里换小一点的模型（例如 qwen3:1.7b）、减少镜头数量后再试，或把“剧本由谁写”改成“阿里云通义千问”。",
           );
         throw e;
       }

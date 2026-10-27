@@ -145,6 +145,7 @@ async function runProject(id) {
     status("正在检查项目…");
     const result = await window.studio.run(id);
     if (result.canceled) status("已取消，未提交新任务");
+    else status("完成：" + result.output);
   } finally {
     active = false;
     await refresh();
@@ -301,7 +302,7 @@ async function write() {
   if (active) throw Error("任务正在运行");
   active = true;
   try {
-    status("Ollama 正在生成剧本，请稍候…");
+    status("正在写剧本，请稍候…");
     const continuous = $("flow").value === "continue";
     const draft = await window.studio.generateStory(
       $("idea").value,
@@ -350,7 +351,11 @@ function syncSources() {
 $("videoProvider").onchange = syncSources;
 $("scriptSource").onchange = syncSources;
 $("imageSource").onchange = syncSources;
-window.studio.onProgress(status);
+// A progress message can arrive after its task's own result, so it may only change the
+// status while a task is still running.
+window.studio.onProgress((message) => {
+  if (active) status(message);
+});
 action(async () => {
   const cfg = await window.studio.settings();
   for (const f of fields) $(f).value = String(cfg[f] ?? "");

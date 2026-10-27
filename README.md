@@ -39,7 +39,7 @@ Windows 10/11 x64 Electron 桌面应用：
 
 ### 可选：本机 Ollama 写剧本
 
-安装 [Ollama for Windows](https://ollama.com/download/windows)，在终端运行 `ollama pull qwen2.5:7b`（需要 Ollama 0.5 或更新版本）。在设置里把“剧本由谁写”改成“本机 Ollama”，默认地址 `http://127.0.0.1:11434`。
+安装 [Ollama for Windows](https://ollama.com/download/windows)，在终端运行 `ollama pull qwen2.5:7b`（需要 Ollama 0.5 或更新版本）。在设置里把“剧本由谁写”改成“本机 Ollama”，默认地址 `http://127.0.0.1:11434`。`qwen3` 等会“思考”的模型也可以用，写剧本时会关掉思考以加快速度。没有显卡的电脑写剧本可能要几分钟，状态栏会显示已经写了多少字；太慢时可以换小一点的模型（例如 `qwen3:1.7b`）、减少镜头数量，或改用阿里云通义千问。
 
 ### 可选：本机 ComfyUI 画图（可以看和调整工作流）
 

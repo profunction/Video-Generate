@@ -110,16 +110,16 @@ function describe(body) {
     return body;
   }
 }
-async function json(url, options = {}, fetcher = fetch) {
+// Node's fetch also gives up by itself when a reply does not start within 5 minutes.
+const slow = (e) =>
+  e.name === "TimeoutError" || /TIMEOUT/.test(e.cause?.code || "");
+async function request(url, options, fetcher) {
   let r;
   try {
-    r = await fetcher(url, {
-      signal: AbortSignal.timeout(180000),
-      ...options,
-    });
+    r = await fetcher(url, options);
   } catch (e) {
     throw Error(
-      e.name === "TimeoutError"
+      slow(e)
         ? `Local AI timed out: ${new URL(url).origin}`
         : `Cannot reach ${new URL(url).origin}; start the service and check its address`,
     );
@@ -133,6 +133,14 @@ async function json(url, options = {}, fetcher = fetch) {
       `Local AI HTTP ${r.status}; check service, model and workflow${detail ? ": " + detail : ""}`,
     );
   }
+  return r;
+}
+async function json(url, options = {}, fetcher = fetch) {
+  const r = await request(
+    url,
+    { signal: AbortSignal.timeout(180000), ...options },
+    fetcher,
+  );
   return r.json();
 }
 // Writes the script with Qwen on Alibaba Cloud, using the same key as Wan.
@@ -174,6 +182,60 @@ async function cloudChat(cfg, key, messages, fetcher) {
   }
   return (await r.json()).choices?.[0]?.message?.content;
 }
+// The script is streamed: a slow computer then never hits fetch's 5-minute wait for a
+// reply to start, and the app can show that writing is still going on.
+async function ollamaChat(cfg, body, fetcher, progress) {
+  const origin = localBase(cfg.ollamaUrl);
+  const r = await request(
+    origin + "/api/chat",
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      // CPU-only machines can need many minutes for a long screenplay.
+      signal: AbortSignal.timeout(15 * 60000),
+      body: JSON.stringify({ ...body, stream: true }),
+    },
+    fetcher,
+  );
+  const decoder = new TextDecoder();
+  let content = "",
+    rest = "";
+  // Ollama sends one JSON line per piece of text, and a line can arrive in several chunks.
+  const read = (text) => {
+    rest += text;
+    const lines = rest.split("\n");
+    rest = lines.pop();
+    for (const line of lines) {
+      if (!line.trim()) continue;
+      let data;
+      try {
+        data = JSON.parse(line);
+      } catch {
+        throw Object.assign(Error("Ollama sent an unreadable reply"), {
+          reply: true,
+        });
+      }
+      if (data.error)
+        throw Object.assign(Error(`Ollama: ${data.error}`), { reply: true });
+      content += data.message?.content ?? "";
+    }
+  };
+  try {
+    for await (const chunk of r.body) {
+      read(decoder.decode(chunk, { stream: true }));
+      progress(content.length);
+    }
+    read(decoder.decode() + "\n");
+  } catch (e) {
+    if (e.reply) throw e;
+    throw Error(
+      slow(e)
+        ? `Local AI timed out: ${origin}`
+        : "Ollama 写剧本时中断了，可能是电脑内存不够或 Ollama 被关掉了。可以在设置里换小一点的模型（例如 qwen3:1.7b）、减少镜头数量后再试，或把“剧本由谁写”改成“阿里云通义千问”。",
+    );
+  }
+  return content;
+}
 async function storyboard(
   idea,
   count,
@@ -181,6 +243,7 @@ async function storyboard(
   fetcher = fetch,
   continuous = false,
   key = "",
+  progress = () => {},
 ) {
   if (
     typeof idea !== "string" ||
@@ -203,48 +266,42 @@ async function storyboard(
     content = await cloudChat(cfg, key, messages, fetcher);
   else {
     const text = { type: "string" };
-    const data = await json(
-      localBase(cfg.ollamaUrl) + "/api/chat",
+    content = await ollamaChat(
+      cfg,
       {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        // CPU-only machines can need many minutes for a long screenplay.
-        signal: AbortSignal.timeout(15 * 60000),
-        body: JSON.stringify({
-          model: cfg.ollamaModel,
-          stream: false,
-          format: {
-            type: "object",
-            properties: {
-              title: text,
-              scenes: {
-                type: "array",
-                minItems: count,
-                maxItems: count,
-                items: {
-                  type: "object",
-                  properties: {
-                    prompt: text,
-                    imagePrompt: text,
-                    narration: text,
-                  },
-                  required: ["prompt", "imagePrompt", "narration"],
+        model: cfg.ollamaModel,
+        // Thinking (qwen3 and similar) can take many minutes on a CPU and adds nothing here.
+        think: false,
+        format: {
+          type: "object",
+          properties: {
+            title: text,
+            scenes: {
+              type: "array",
+              minItems: count,
+              maxItems: count,
+              items: {
+                type: "object",
+                properties: {
+                  prompt: text,
+                  imagePrompt: text,
+                  narration: text,
                 },
+                required: ["prompt", "imagePrompt", "narration"],
               },
             },
-            required: ["title", "scenes"],
           },
-          // The default context window truncates long screenplays into invalid JSON.
-          options: { num_ctx: 8192 },
-          messages,
-        }),
+          required: ["title", "scenes"],
+        },
+        // The default context window truncates long screenplays into invalid JSON.
+        options: { num_ctx: 8192 },
+        messages,
       },
       fetcher,
+      progress,
     );
-    // Thinking models such as qwen3 may put their reasoning before the JSON.
-    content = String(data.message?.content ?? "")
-      .replace(/<think>[\s\S]*?<\/think>/g, "")
-      .trim();
+    // Older Ollama versions ignore think: false and put the reasoning before the JSON.
+    content = content.replace(/<think>[\s\S]*?<\/think>/g, "").trim();
   }
   let parsed;
   try {

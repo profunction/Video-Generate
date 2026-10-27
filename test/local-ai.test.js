@@ -16,6 +16,27 @@ const {
 } = require("../app/local-ai");
 const { Wan, validate, download, merge, run } = require("../app/engine");
 const { finish, subtitles } = require("../app/finish");
+// Ollama streams one JSON line per piece of text; the bytes are cut every 23 bytes, so lines
+// and Chinese characters are split across chunks the way a real socket can split them.
+function ollamaReply(content, extra = []) {
+  const lines = [];
+  for (let i = 0; i < content.length; i += 7)
+    lines.push({ message: { content: content.slice(i, i + 7) }, done: false });
+  const text =
+    [...lines, ...extra, { done: true }]
+      .map((line) => JSON.stringify(line))
+      .join("\n") + "\n";
+  const bytes = new TextEncoder().encode(text);
+  return new Response(
+    new ReadableStream({
+      start(controller) {
+        for (let i = 0; i < bytes.length; i += 23)
+          controller.enqueue(bytes.slice(i, i + 23));
+        controller.close();
+      },
+    }),
+  );
+}
 const workflow = {
   1: { class_type: "CLIPTextEncode", inputs: { text: "cinematic {{PROMPT}}" } },
   2: { class_type: "KSampler", inputs: { seed: 1 } },
@@ -58,26 +79,18 @@ test("workflow replacement preserves links, does not mutate source, rejects UI f
 });
 test("story generation validates returned scene count and structured fields", async () => {
   await assert.rejects(
-    () =>
-      storyboard("story", 2, cfg, async () => ({
-        ok: true,
-        json: async () => ({ message: { content: '{"scenes":[]}' } }),
-      })),
+    () => storyboard("story", 2, cfg, async () => ollamaReply('{"scenes":[]}')),
     /count mismatch/,
   );
 });
 test("a thinking model's reasoning before the script is ignored", async () => {
   const scene = { prompt: "Walk", imagePrompt: "Hero", narration: "Hi" };
-  const story = await storyboard("story", 1, cfg, async () => ({
-    ok: true,
-    json: async () => ({
-      message: {
-        content:
-          "<think>\nThe user wants {a story}.\n</think>\n\n" +
-          JSON.stringify({ title: "T", scenes: [scene] }),
-      },
-    }),
-  }));
+  const story = await storyboard("story", 1, cfg, async () =>
+    ollamaReply(
+      "<think>\nThe user wants {a story}.\n</think>\n\n" +
+        JSON.stringify({ title: "T", scenes: [scene] }),
+    ),
+  );
   assert.equal(story.scenes[0].prompt, "Walk");
 });
 test("story generation constrains JSON, trims extra scenes and whitespace", async () => {
@@ -90,14 +103,7 @@ test("story generation constrains JSON, trims extra scenes and whitespace", asyn
       imagePrompt: "Hero",
       narration: "Hi",
     };
-    return {
-      ok: true,
-      json: async () => ({
-        message: {
-          content: JSON.stringify({ title: "T", scenes: [scene, scene] }),
-        },
-      }),
-    };
+    return ollamaReply(JSON.stringify({ title: "T", scenes: [scene, scene] }));
   });
   assert.equal(story.scenes.length, 1);
   assert.equal(story.scenes[0].prompt, "Camera moves");
@@ -107,12 +113,7 @@ test("continuous stories ask for one take without cuts", async () => {
   const fetcher = async (url, options) => {
     prompts.push(JSON.parse(options.body).messages[0].content);
     const scene = { prompt: "Walk", imagePrompt: "Hero", narration: "Hi" };
-    return {
-      ok: true,
-      json: async () => ({
-        message: { content: JSON.stringify({ title: "T", scenes: [scene] }) },
-      }),
-    };
+    return ollamaReply(JSON.stringify({ title: "T", scenes: [scene] }));
   };
   await storyboard("story", 1, cfg, fetcher, true);
   await storyboard("story", 1, cfg, fetcher);
@@ -187,6 +188,80 @@ test("in cloud mode Qwen writes the script with the Alibaba Cloud key", async ()
       async () => assert.fail("no local service should be contacted"),
     ),
     "",
+  );
+});
+test("Ollama streams the script without thinking and reports progress", async () => {
+  const scene = {
+    prompt: "Walk",
+    imagePrompt: "Hero",
+    narration: "雨夜，钟表铺还亮着灯。",
+  };
+  let body;
+  const written = [];
+  const story = await storyboard(
+    "story",
+    1,
+    cfg,
+    async (url, options) => {
+      body = JSON.parse(options.body);
+      return ollamaReply(
+        JSON.stringify({ title: "来自明天的信", scenes: [scene] }),
+      );
+    },
+    false,
+    "",
+    (n) => written.push(n),
+  );
+  assert.equal(body.stream, true);
+  assert.equal(body.think, false);
+  assert.equal(story.name, "来自明天的信");
+  assert.equal(story.scenes[0].narration, "雨夜，钟表铺还亮着灯。");
+  assert.ok(written.length > 3);
+  assert.ok(written.every((n, i) => !i || n >= written[i - 1]));
+});
+test("an Ollama failure while writing says what happened instead of 'cannot reach'", async () => {
+  // An error line in the stream, e.g. the model ran out of memory.
+  await assert.rejects(
+    () =>
+      storyboard("story", 1, cfg, async () =>
+        ollamaReply('{"title":"T","sce', [
+          { error: "model runner has unexpectedly stopped" },
+        ]),
+      ),
+    /Ollama: model runner has unexpectedly stopped/,
+  );
+  // The connection drops part-way through.
+  await assert.rejects(
+    () =>
+      storyboard(
+        "story",
+        1,
+        cfg,
+        async () =>
+          new Response(
+            new ReadableStream({
+              start(controller) {
+                controller.enqueue(
+                  new TextEncoder().encode('{"message":{"content":"{"}}\n'),
+                );
+                controller.error(new TypeError("terminated"));
+              },
+            }),
+          ),
+      ),
+    /Ollama 写剧本时中断了/,
+  );
+  // No reply within fetch's own limit is a timeout, not an unreachable service.
+  await assert.rejects(
+    () =>
+      storyboard("story", 1, cfg, async () => {
+        throw new TypeError("fetch failed", {
+          cause: Object.assign(Error("Headers Timeout Error"), {
+            code: "UND_ERR_HEADERS_TIMEOUT",
+          }),
+        });
+      }),
+    /Local AI timed out: http:\/\/127\.0\.0\.1:11434/,
   );
 });
 test("local AI errors explain unreachable services and provider replies", async () => {
@@ -600,23 +675,18 @@ test("mock connected flow: story → ComfyUI → local image upload → Wan → 
       if (u.pathname === "/api/chat") {
         const body = JSON.parse(options.body);
         assert.equal(body.model, "test");
-        return {
-          ok: true,
-          json: async () => ({
-            message: {
-              content: JSON.stringify({
-                title: "Drama",
-                scenes: [
-                  {
-                    prompt: "Camera moves",
-                    imagePrompt: "A clockmaker",
-                    narration: "A letter arrives",
-                  },
-                ],
-              }),
-            },
+        return ollamaReply(
+          JSON.stringify({
+            title: "Drama",
+            scenes: [
+              {
+                prompt: "Camera moves",
+                imagePrompt: "A clockmaker",
+                narration: "A letter arrives",
+              },
+            ],
           }),
-        };
+        );
       }
       if (u.pathname === "/prompt") {
         assert.equal(
