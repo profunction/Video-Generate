@@ -80,6 +80,23 @@ test("story generation constrains JSON, trims extra scenes and whitespace", asyn
   assert.equal(story.scenes.length, 1);
   assert.equal(story.scenes[0].prompt, "Camera moves");
 });
+test("continuous stories ask for one take without cuts", async () => {
+  const prompts = [];
+  const fetcher = async (url, options) => {
+    prompts.push(JSON.parse(options.body).messages[0].content);
+    const scene = { prompt: "Walk", imagePrompt: "Hero", narration: "Hi" };
+    return {
+      ok: true,
+      json: async () => ({
+        message: { content: JSON.stringify({ title: "T", scenes: [scene] }) },
+      }),
+    };
+  };
+  await storyboard("story", 1, cfg, fetcher, true);
+  await storyboard("story", 1, cfg, fetcher);
+  assert.match(prompts[0], /continuous take/);
+  assert.doesNotMatch(prompts[1], /continuous take/);
+});
 test("local AI errors explain unreachable services and provider replies", async () => {
   await assert.rejects(
     () =>

@@ -181,12 +181,13 @@ app.whenReady().then(async () => {
     const p = {
       id: crypto.randomUUID(),
       name: String(input.name || "Untitled").slice(0, 100),
-      scenes: input.scenes.map((s) => ({
+      scenes: input.scenes.map((s, i) => ({
         prompt: text(s.prompt),
         image: text(s.image),
         imagePrompt: text(s.imagePrompt),
         narration: text(s.narration).slice(0, 2000),
         localImage: s.localImage || "",
+        continuePrevious: i > 0 && Boolean(s.continuePrevious),
       })),
       reserved: 0,
       createdAt: new Date().toISOString(),
@@ -227,12 +228,18 @@ app.whenReady().then(async () => {
       );
     return report.join("\n");
   });
-  ipcMain.handle("story:generate", async (_, idea, count) => {
+  ipcMain.handle("story:generate", async (_, idea, count, continuous) => {
     if (busy) throw Error("Another operation is running");
     busy = true;
     try {
       emit("Ollama 正在生成剧本…");
-      return await storyboard(idea, Number(count), await settings());
+      return await storyboard(
+        idea,
+        Number(count),
+        await settings(),
+        fetch,
+        Boolean(continuous),
+      );
     } finally {
       busy = false;
     }
@@ -271,6 +278,7 @@ app.whenReady().then(async () => {
           image: text(scenes[i].image),
           imagePrompt: text(scenes[i].imagePrompt),
           localImage: scenes[i].localImage || "",
+          continuePrevious: i > 0 && Boolean(scenes[i].continuePrevious),
         };
       // Compare trimmed text: the editor trims, but stored Ollama output may not be.
       if (old.taskId || old.uncertain) {
@@ -278,7 +286,8 @@ app.whenReady().then(async () => {
           next.prompt !== text(old.prompt) ||
           next.image !== text(old.image) ||
           next.imagePrompt !== text(old.imagePrompt) ||
-          next.localImage !== (old.localImage || "")
+          next.localImage !== (old.localImage || "") ||
+          next.continuePrevious !== Boolean(old.continuePrevious)
         )
           throw Error(
             "Submitted scene visuals are locked; create a new project to change them",
@@ -296,6 +305,7 @@ app.whenReady().then(async () => {
         old.prompt = next.prompt;
         old.image = next.image;
         old.imagePrompt = next.imagePrompt;
+        old.continuePrevious = next.continuePrevious;
         if (next.localImage && next.localImage !== old.localImage)
           old.localImage = await importImage(
             next.localImage,
@@ -332,7 +342,12 @@ app.whenReady().then(async () => {
       await run(cfg.ffmpeg, ["-version"]);
       await run(cfg.ffprobe, ["-version"]);
       const needsComfy = p.scenes.some(
-        (s) => !s.taskId && !s.clip && !s.localImage && !s.image,
+        (s, i) =>
+          !s.taskId &&
+          !s.clip &&
+          !s.localImage &&
+          !s.image &&
+          !(i > 0 && s.continuePrevious),
       );
       const workflow = needsComfy
         ? await read(path.join(root(), "workflow.json"), null)

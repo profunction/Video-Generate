@@ -206,6 +206,57 @@ test("a download that is not a video is discarded and keeps the task", async (t)
   assert.equal(p.scenes[0].taskId, "t1");
   await assert.rejects(() => fs.access(path.join(dir, "clip-1.mp4")));
 });
+test("a continuing scene starts from the previous clip's last frame", async (t) => {
+  if (!(await ffmpeg(t))) return;
+  const dir = await folder(t);
+  await run("ffmpeg", [
+    "-y",
+    "-f",
+    "lavfi",
+    "-i",
+    "color=c=blue:s=320x240:d=1",
+    "-c:v",
+    "libx264",
+    path.join(dir, "clip-1.mp4"),
+  ]);
+  const p = {
+    scenes: [
+      {
+        prompt: "Walk",
+        image,
+        taskId: "t1",
+        region: "china",
+        clip: "clip-1.mp4",
+      },
+      { prompt: "He keeps walking", continuePrevious: true },
+    ],
+    reserved: 0,
+  };
+  const uploaded = [];
+  const wan = wanFake({
+    upload: async (file) => {
+      uploaded.push(file);
+      await fs.access(file);
+      return "oss://temp/frame.png";
+    },
+    submit: async (scene) => {
+      assert.equal(scene.image, "oss://temp/frame.png");
+      return "t2";
+    },
+    poll: async (id) => {
+      assert.equal(id, "t2");
+      return "https://video.test/clip.mp4";
+    },
+  });
+  await produce(p, dir, cfg, {
+    wan,
+    persist: async () => {},
+    fetcher: async () =>
+      new Response(await fs.readFile(path.join(dir, "clip-1.mp4"))),
+  });
+  assert.deepEqual(uploaded, [path.join(dir, "frame-2.png")]);
+  assert.equal(p.scenes[1].clip, "clip-2.mp4");
+});
 test("a ComfyUI job forgotten after a restart is generated again once", async (t) => {
   const dir = await folder(t);
   const p = { scenes: [{ prompt: "Walk", imagePrompt: "Hero" }], reserved: 0 };

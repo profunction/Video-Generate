@@ -111,13 +111,23 @@
             min="1"
             max="20"
             value="4" /></label
+        ><label
+          >镜头衔接<select id="flow">
+            <option value="continue">
+              连续：下一个镜头接上一个镜头的最后一帧（人物和场景不变）
+            </option>
+            <option value="separate">
+              独立：每个镜头单独配图（可以换场景）
+            </option>
+          </select></label
         ><button id="write">生成剧本并编辑</button
         ><button id="automatic">一键生成完整短剧</button>
         <p>
           一键流程：Ollama 剧本 → ComfyUI 分镜图片 → 上传阿里云 → Wan 视频 →
           配音 / 字幕 /
-          MP4。需先保存设置并导入可用工作流；付费调用仍需确认。也可手动填写或选择本地图片。字幕为
-          MP4 可选字幕轨，同时导出 SRT。每镜头旁白需控制在 5 秒以内。
+          MP4。需先保存设置并导入可用工作流；付费调用仍需确认。也可手动填写或选择本地图片。连续模式只需要第
+          1 个镜头的图片，后面的镜头从上一个镜头的最后一帧接着拍。字幕为 MP4
+          可选字幕轨，同时导出 SRT。每镜头旁白需控制在 5 秒以内。
         </p>
         <label>项目名称<input id="name" placeholder="我的第一部短剧" /></label>
         <div id="scenes"></div>

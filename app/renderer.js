@@ -52,18 +52,30 @@ function scene(data = {}) {
     row.append(l);
     return el;
   }
+  const join = document.createElement("label");
+  join.className = "continue";
+  const box = document.createElement("input");
+  box.type = "checkbox";
+  box.dataset.field = "continuePrevious";
+  box.checked = Boolean(data.continuePrevious);
+  box.disabled = locked;
+  box.onchange = () => row.classList.toggle("continuing", box.checked);
+  row.classList.toggle("continuing", box.checked);
+  join.append(box, "接上一个镜头的最后一帧（人物和场景不变，不需要图片）");
+  row.append(join);
   field(
     "input",
     "图片网址（使用本地图片 / ComfyUI 时可留空）",
     data.image,
     "image",
-  );
+  ).parentElement.classList.add("visual");
   const local = field("input", "本地图片", data.localImage, "localImage");
   local.readOnly = true;
+  local.parentElement.classList.add("visual");
   if (!locked) {
     const pick = document.createElement("button");
     pick.textContent = "选择本地图片";
-    pick.className = "secondary";
+    pick.className = "secondary visual";
     pick.onclick = () =>
       action(async () => {
         const file = await window.studio.pickImage();
@@ -75,7 +87,7 @@ function scene(data = {}) {
     row.append(pick);
     const clear = document.createElement("button");
     clear.textContent = "清除本地图片";
-    clear.className = "secondary";
+    clear.className = "secondary visual";
     clear.onclick = () => {
       local.value = "";
       row.dataset.localImage = "";
@@ -87,7 +99,7 @@ function scene(data = {}) {
     "ComfyUI 图片提示词（没有图片时自动生图）",
     data.imagePrompt,
     "imagePrompt",
-  );
+  ).parentElement.classList.add("visual");
   field("textarea", "Wan 镜头动作提示词", data.prompt, "prompt");
   field(
     "textarea",
@@ -105,14 +117,17 @@ function scene(data = {}) {
   $("scenes").append(row);
 }
 function sceneValues() {
-  return [...document.querySelectorAll(".scene")].map((row) =>
-    Object.fromEntries(
+  return [...document.querySelectorAll(".scene")].map((row, i) => {
+    const values = Object.fromEntries(
       [...row.querySelectorAll("[data-field]")].map((el) => [
         el.dataset.field,
-        el.value.trim(),
+        el.type === "checkbox" ? el.checked : el.value.trim(),
       ]),
-    ),
-  );
+    );
+    // The first scene has nothing to continue from.
+    values.continuePrevious = i > 0 && values.continuePrevious === true;
+    return values;
+  });
 }
 async function runProject(id) {
   if (active) throw Error("任务正在运行");
@@ -202,10 +217,14 @@ $("create").onclick = () =>
     if (
       !scenes.length ||
       scenes.some(
-        (s) => !s.prompt || (!s.image && !s.localImage && !s.imagePrompt),
+        (s) =>
+          !s.prompt ||
+          (!s.continuePrevious && !s.image && !s.localImage && !s.imagePrompt),
       )
     )
-      throw Error("请填写镜头提示词，以及图片网址、本地图片或生图提示词");
+      throw Error(
+        "请填写镜头提示词；第 1 个镜头和不接上一镜头的镜头还需要图片网址、本地图片或生图提示词",
+      );
     if (editing) await window.studio.update(editing, scenes);
     else await window.studio.create({ name: $("name").value, scenes });
     await refresh();
@@ -216,10 +235,13 @@ async function write() {
   active = true;
   try {
     status("Ollama 正在生成剧本，请稍候…");
+    const continuous = $("flow").value === "continue";
     const draft = await window.studio.generateStory(
       $("idea").value,
       Number($("count").value),
+      continuous,
     );
+    draft.scenes.forEach((s, i) => (s.continuePrevious = continuous && i > 0));
     editing = null;
     $("name").value = draft.name;
     $("create").textContent = "保存项目";

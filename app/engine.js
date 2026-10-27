@@ -143,14 +143,19 @@ function validate(project, settings) {
     project.scenes.length > 50
   )
     throw new Error("Provide 1–50 scenes");
-  for (const scene of project.scenes) {
+  for (const [i, scene] of project.scenes.entries()) {
     if (
       typeof scene.prompt !== "string" ||
       !scene.prompt.trim() ||
       scene.prompt.length > 2000
     )
       throw new Error("Each scene needs a prompt of at most 2000 characters");
-    if (scene.localImage || (!scene.image && scene.imagePrompt)) continue;
+    if (
+      scene.localImage ||
+      (i > 0 && scene.continuePrevious) ||
+      (!scene.image && scene.imagePrompt)
+    )
+      continue;
     let url;
     try {
       url = new URL(scene.image);
@@ -252,6 +257,20 @@ async function probe(file, settings) {
     throw new Error(`${path.basename(file)} contains no video stream`);
   return Number(info.format?.duration) || 0;
 }
+// Saves the final frame of a clip, so the next scene can start exactly where it ends.
+async function lastFrame(clip, target, settings) {
+  await run(settings.ffmpeg, [
+    "-y",
+    "-sseof",
+    "-1",
+    "-i",
+    clip,
+    "-update",
+    "1",
+    target,
+  ]);
+  return target;
+}
 async function merge(clips, folder, settings) {
   const normalized = [];
   for (let i = 0; i < clips.length; i++) {
@@ -297,4 +316,12 @@ async function merge(clips, folder, settings) {
   ]);
   return output;
 }
-module.exports = { Wan, validate, download, merge, run, probe };
+module.exports = {
+  Wan,
+  validate,
+  download,
+  merge,
+  run,
+  probe,
+  lastFrame,
+};

@@ -1,6 +1,6 @@
 const fs = require("node:fs/promises");
 const path = require("node:path");
-const { download, probe } = require("./engine");
+const { download, probe, lastFrame } = require("./engine");
 const DAY = 24 * 60 * 60 * 1000;
 const exists = (file) =>
   fs.access(file).then(
@@ -37,7 +37,16 @@ async function produce(
         `镜头 ${n} 的付费提交结果不确定。请先在阿里云控制台核实，不要直接创建替代项目。`,
       );
     if (!s.taskId) {
-      if (!s.localImage && !s.image) {
+      let source = s.localImage;
+      if (i > 0 && s.continuePrevious) {
+        // Start from the previous clip's final frame, so characters and setting stay the same.
+        emit(`正在截取镜头 ${i} 的最后一帧…`);
+        source = await lastFrame(
+          path.join(folder, p.scenes[i - 1].clip),
+          path.join(folder, `frame-${n}.png`),
+          cfg,
+        );
+      } else if (!s.localImage && !s.image) {
         const target = path.join(folder, `image-${i}.png`);
         for (let attempt = 0; ; attempt++) {
           if (!s.comfyId) {
@@ -54,13 +63,13 @@ async function produce(
             delete s.comfyId;
           }
         }
-        s.localImage = target;
+        s.localImage = source = target;
         await persist();
       }
       let remoteImage = s.image;
-      if (s.localImage) {
+      if (source) {
         emit(`正在上传镜头 ${n} 的图片…`);
-        remoteImage = await wan.upload(s.localImage);
+        remoteImage = await wan.upload(source);
       }
       const reserved = Number(p.reserved || 0);
       s.uncertain = true;

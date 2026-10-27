@@ -1,7 +1,7 @@
 const { contextBridge, ipcRenderer } = require("electron");
 contextBridge.exposeInMainWorld("studio", {
-  generateStory: (idea, count) =>
-    ipcRenderer.invoke("story:generate", idea, count),
+  generateStory: (idea, count, continuous) =>
+    ipcRenderer.invoke("story:generate", idea, count, continuous),
   checkLocal: () => ipcRenderer.invoke("local:check"),
   importWorkflow: () => ipcRenderer.invoke("workflow:import"),
   pickImage: () => ipcRenderer.invoke("image:pick"),

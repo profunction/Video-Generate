@@ -1,6 +1,6 @@
 const { test } = require("node:test");
 const assert = require("node:assert/strict");
-const { Wan, validate, merge, run } = require("../app/engine");
+const { Wan, validate, merge, run, lastFrame } = require("../app/engine");
 const fs = require("node:fs/promises");
 const os = require("node:os");
 const path = require("node:path");
@@ -28,6 +28,58 @@ test("budget includes reserved spend and excludes previously submitted jobs", ()
     () => validate({ scenes: [{ ...scene, image: "file:///secret" }] }, cfg),
     /HTTPS/,
   );
+});
+test("continuing scenes need no image, but the first scene always does", () => {
+  const next = { prompt: "Next", continuePrevious: true };
+  assert.equal(validate({ scenes: [scene, next] }, cfg), 1);
+  assert.throws(() => validate({ scenes: [next] }, cfg), /HTTPS image URL/);
+});
+test("the last frame of a clip is saved for the next scene", async (t) => {
+  try {
+    await run("ffmpeg", ["-version"]);
+  } catch {
+    t.skip("FFmpeg not installed");
+    return;
+  }
+  const folder = await fs.mkdtemp(path.join(os.tmpdir(), "last frame "));
+  try {
+    // Red for the first second, then blue: the final frame must be blue.
+    const clip = path.join(folder, "clip.mp4");
+    await run("ffmpeg", [
+      "-y",
+      "-f",
+      "lavfi",
+      "-i",
+      "color=c=red:s=64x64:d=2",
+      "-vf",
+      "drawbox=x=0:y=0:w=iw:h=ih:color=blue:t=fill:enable='gte(t,1)'",
+      "-c:v",
+      "libx264",
+      "-pix_fmt",
+      "yuv420p",
+      clip,
+    ]);
+    const frame = await lastFrame(clip, path.join(folder, "frame.png"), {
+      ffmpeg: "ffmpeg",
+    });
+    const pixel = path.join(folder, "pixel.rgb");
+    await run("ffmpeg", [
+      "-y",
+      "-i",
+      frame,
+      "-vf",
+      "scale=1:1",
+      "-f",
+      "rawvideo",
+      "-pix_fmt",
+      "rgb24",
+      pixel,
+    ]);
+    const [r, , b] = await fs.readFile(pixel);
+    assert.ok(b > 180 && r < 80, `expected blue, got r=${r} b=${b}`);
+  } finally {
+    await fs.rm(folder, { recursive: true, force: true });
+  }
 });
 test("submitted scenes can be re-exported without price or budget", () => {
   assert.equal(

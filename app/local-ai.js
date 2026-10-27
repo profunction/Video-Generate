@@ -49,7 +49,13 @@ async function json(url, options = {}, fetcher = fetch) {
   }
   return r.json();
 }
-async function storyboard(idea, count, cfg, fetcher = fetch) {
+async function storyboard(
+  idea,
+  count,
+  cfg,
+  fetcher = fetch,
+  continuous = false,
+) {
   if (
     typeof idea !== "string" ||
     !idea.trim() ||
@@ -96,7 +102,7 @@ async function storyboard(idea, count, cfg, fetcher = fetch) {
         messages: [
           {
             role: "system",
-            content: `Write a coherent short drama in exactly ${count} scenes, each 5 seconds. Return JSON only: {"title":"...","scenes":[{"prompt":"English camera movement and action, max 1800 characters","imagePrompt":"English detailed still image prompt; repeat consistent character appearances and style in every scene","narration":"very short spoken line in the user's language, max 15 Chinese characters or 8 English words"}]}. No markdown. Keep characters consistent, give the story a beginning, conflict and ending.`,
+            content: `Write a coherent short drama in exactly ${count} scenes, each 5 seconds. ${continuous ? "The scenes form one continuous take in a single location: each scene's video starts from the last frame of the previous scene, so describe only what happens next, with no cuts, time jumps or location changes. " : ""}Return JSON only: {"title":"...","scenes":[{"prompt":"English camera movement and action, max 1800 characters","imagePrompt":"English detailed still image prompt; repeat consistent character appearances and style in every scene","narration":"very short spoken line in the user's language, max 15 Chinese characters or 8 English words"}]}. No markdown. Keep characters consistent, give the story a beginning, conflict and ending.`,
           },
           { role: "user", content: idea },
         ],

@@ -116,6 +116,22 @@ button:disabled {
 .scene.locked {
   border-left-color: #5b6578;
 }
+.continue {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.continue input {
+  width: auto;
+  margin: 0;
+}
+/* The first scene has nothing to continue from. */
+.scene:first-child .continue {
+  display: none;
+}
+.scene.continuing:not(:first-child) .visual {
+  display: none;
+}
 .project {
   padding: 14px 0;
   border-bottom: 1px solid #303c51;
