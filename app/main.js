@@ -10,7 +10,15 @@ const {
 const fs = require("node:fs/promises");
 const path = require("node:path");
 const crypto = require("node:crypto");
-const { Wan, validate, merge, run } = require("./engine");
+const {
+  Wan,
+  Veo,
+  SelfHosted,
+  validate,
+  merge,
+  run,
+  sceneSeconds,
+} = require("./engine");
 const {
   storyboard,
   Comfy,
@@ -26,6 +34,8 @@ let win,
   // Only paid generation must keep the window open; leaving while a script is written is harmless.
   guarded = false;
 const defaults = {
+  // Who makes the video: Alibaba Cloud Wan, Google Veo, or your own GPU server.
+  videoProvider: "wan",
   region: "china",
   model: "wan2.2-i2v-flash",
   pricePerSecond: 0,
@@ -42,6 +52,23 @@ const defaults = {
   imageSource: "cloud",
   textModel: "qwen-plus",
   imageModel: "wan2.2-t2i-flash",
+  veoModel: "veo-3.1-generate-preview",
+  selfHostedUrl: "http://127.0.0.1:8081",
+};
+// Each service keeps its own encrypted key.
+const SECRETS = {
+  wan: { file: "key.bin", field: "key", name: "阿里云 API Key" },
+  veo: { file: "veo-key.bin", field: "veoKey", name: "Google Gemini API Key" },
+  selfHosted: {
+    file: "selfhosted-key.bin",
+    field: "selfHostedKey",
+    name: "自建服务器密钥",
+  },
+};
+const PROVIDERS = {
+  wan: "阿里云 Wan",
+  veo: "Google Veo",
+  selfHosted: "自建服务器",
 };
 const root = () => app.getPath("userData");
 const text = (value) => String(value ?? "").trim();
@@ -98,20 +125,23 @@ async function settings() {
     }
   return cfg;
 }
-async function readKey() {
+async function readKey(service = "wan", optional = false) {
+  const { file, name } = SECRETS[service];
   let data;
   try {
-    data = await fs.readFile(path.join(root(), "key.bin"));
+    data = await fs.readFile(path.join(root(), file));
   } catch (e) {
-    if (e.code === "ENOENT") throw Error("请先在设置中保存阿里云 API Key");
-    throw e;
+    if (e.code !== "ENOENT") throw e;
+    if (optional) return "";
+    throw Error(`请先在设置中保存${name}`);
   }
   try {
     return safeStorage.decryptString(data);
   } catch {
-    throw Error("无法解密已保存的 API Key，请重新输入并保存设置");
+    throw Error(`无法解密已保存的${name}，请重新输入并保存设置`);
   }
 }
+const hasKey = (service) => exists(path.join(root(), SECRETS[service].file));
 // Some Wan models reject images over 2000 px per side, and 720P output gains nothing from more.
 async function importImage(source, target) {
   let img = nativeImage.createFromPath(source);
@@ -162,16 +192,19 @@ app.whenReady().then(async () => {
   win.loadFile(path.join(__dirname, "index.html"));
   win.webContents.setWindowOpenHandler(() => ({ action: "deny" }));
   win.webContents.on("will-navigate", (e) => e.preventDefault());
-  ipcMain.handle("settings:get", async () => ({
-    ...(await saved()),
-    hasKey: await exists(path.join(root(), "key.bin")),
-  }));
+  ipcMain.handle("settings:get", async () => {
+    const keys = {};
+    for (const service of Object.keys(SECRETS))
+      keys[service] = await hasKey(service);
+    return { ...(await saved()), hasKey: keys.wan, keys };
+  });
   ipcMain.handle("settings:save", async (_, value) => {
     if (busy) throw Error("Wait until generation finishes");
     const config = {};
     for (const k of Object.keys(defaults)) config[k] = value[k] ?? defaults[k];
-    const key = text(value.key);
-    if (key) {
+    for (const { file, field } of Object.values(SECRETS)) {
+      const key = text(value[field]);
+      if (!key) continue;
       if (
         !safeStorage.isEncryptionAvailable() ||
         (process.platform === "linux" &&
@@ -179,7 +212,7 @@ app.whenReady().then(async () => {
       )
         throw Error("Secure credential storage unavailable");
       await fs.writeFile(
-        path.join(root(), "key.bin"),
+        path.join(root(), file),
         safeStorage.encryptString(key),
         { mode: 0o600 },
       );
@@ -246,15 +279,39 @@ app.whenReady().then(async () => {
   ipcMain.handle("local:check", async () => {
     const cfg = await settings();
     const report = [await checkServices(cfg)].filter(Boolean);
-    if (cfg.scriptSource === "cloud" || cfg.imageSource === "cloud")
+    const provider = cfg.videoProvider || "wan";
+    if (provider === "veo")
       report.push(
-        ((await exists(path.join(root(), "key.bin")))
+        `Google Veo：${(await hasKey("veo")) ? "API Key 已保存" : "还没有保存 Gemini API Key，请在上面填写后点保存设置"} · 模型 ${cfg.veoModel}`,
+      );
+    if (provider === "selfHosted")
+      report.push(
+        await Promise.resolve()
+          .then(() =>
+            fetch(new URL(cfg.selfHostedUrl).origin, {
+              signal: AbortSignal.timeout(5000),
+            }),
+          )
+          .then(
+            () => `自建服务器：${cfg.selfHostedUrl} 可以连接`,
+            () =>
+              `自建服务器：连不上 ${cfg.selfHostedUrl}，请确认服务器已启动、地址正确`,
+          ),
+      );
+    if (
+      provider === "wan" ||
+      cfg.scriptSource === "cloud" ||
+      cfg.imageSource === "cloud"
+    )
+      report.push(
+        ((await hasKey("wan"))
           ? "阿里云：API Key 已保存"
           : "阿里云：还没有保存 API Key，请在上面填写后点保存设置") +
+          (provider === "wan" ? ` · 视频 ${cfg.model}` : "") +
           (cfg.scriptSource === "cloud" ? ` · 剧本 ${cfg.textModel}` : "") +
           (cfg.imageSource === "cloud" ? ` · 图片 ${cfg.imageModel}` : ""),
       );
-    if (cfg.imageSource !== "cloud") {
+    if (cfg.imageSource !== "cloud" && provider !== "selfHosted") {
       let line = "ComfyUI workflow: ";
       try {
         const flow = await workflow(cfg);
@@ -410,18 +467,21 @@ app.whenReady().then(async () => {
         p = await read(file, null);
       if (!p) throw Error("Project not found");
       const cfg = await settings();
+      const provider = cfg.videoProvider || "wan";
       // Stop before the approval dialog, so no other scene is paid for first.
       const unsure = p.scenes.findIndex((s) => s.uncertain);
       if (unsure >= 0)
         throw Error(
-          `镜头 ${unsure + 1} 的付费提交结果不确定。请先在阿里云控制台核实（见 README“数据与费用保护”），不要直接创建替代项目。`,
+          `镜头 ${unsure + 1} 的付费提交结果不确定。请先在视频服务商的控制台核实（见 README“数据与费用保护”），不要直接创建替代项目。`,
         );
       const estimate = validate(p, cfg);
       await run(cfg.ffmpeg, ["-version"]);
       await run(cfg.ffprobe, ["-version"]);
       // Scenes whose first frame still has to be drawn, by ComfyUI or Alibaba Cloud.
+      // Your own server works from the prompt alone, so it needs no pictures.
       const pictures = p.scenes.filter(
         (s, i) =>
+          provider !== "selfHosted" &&
           !s.taskId &&
           !s.clip &&
           !s.localImage &&
@@ -438,26 +498,54 @@ app.whenReady().then(async () => {
       }
       const folder = path.dirname(file);
       // A deleted clip is downloaded again from its task, which needs the key too.
-      let needsCloud = false;
+      let needsVideo = false;
       for (const s of p.scenes)
         if (!s.clip || !(await exists(path.join(folder, s.clip))))
-          needsCloud = true;
-      const key = needsCloud ? await readKey() : "";
+          needsVideo = true;
+      const wanKey =
+        (needsVideo && provider === "wan") || cloudPictures
+          ? await readKey("wan")
+          : "";
+      const videoKey =
+        needsVideo && provider !== "wan"
+          ? await readKey(provider, provider === "selfHosted")
+          : wanKey;
       const count = p.scenes.filter((s) => !s.taskId && !s.clip).length;
       if (count) {
+        const pictureNote = cloudPictures
+          ? `另外会用阿里云画 ${cloudPictures} 张图，按张计费（失败不收费，价格见百炼控制台）。`
+          : "";
         const result = await dialog.showMessageBox(win, {
           type: "warning",
-          buttons: ["取消", "批准付费生成"],
+          buttons: [
+            "取消",
+            provider === "selfHosted" && !cloudPictures
+              ? "开始生成"
+              : "批准付费生成",
+          ],
           defaultId: 0,
           cancelId: 0,
-          title: "确认付费生成",
-          message: `提交 ${count} 个付费 Wan 视频任务？`,
-          detail: `预计新增视频费用：${estimate.toFixed(2)}。本项目已预留：${Number(p.reserved || 0).toFixed(2)}。预算：${cfg.budget}。${cloudPictures ? `另外会用阿里云画 ${cloudPictures} 张图，按张计费（失败不收费，价格见百炼控制台）。` : ""}图片会上传到阿里云临时存储（有效期 48 小时）。所有金额使用你填写的单价币种；估算不代表实际账单，请核对阿里云当前报价。`,
+          title: "确认生成",
+          message:
+            provider === "selfHosted"
+              ? `在自建服务器上生成 ${count} 个镜头？`
+              : `提交 ${count} 个付费 ${PROVIDERS[provider]} 视频任务？`,
+          detail:
+            provider === "selfHosted"
+              ? `视频在你自己的服务器上生成，本应用不计算服务器（GPU）费用。${pictureNote}`
+              : `预计新增视频费用：${estimate.toFixed(2)}（每个镜头 ${provider === "veo" ? 8 : 5} 秒）。本项目已预留：${Number(p.reserved || 0).toFixed(2)}。预算：${cfg.budget}。${pictureNote}${provider === "veo" ? "镜头的第一帧图片会发送给 Google。" : "图片会上传到阿里云临时存储（有效期 48 小时）。"}所有金额使用你填写的单价币种；估算不代表实际账单，请核对服务商当前报价。`,
         });
         if (result.response !== 1) return { canceled: true };
       }
+      const wan = new Wan(cfg, wanKey);
       await produce(p, folder, cfg, {
-        wan: new Wan(cfg, key),
+        wan,
+        video:
+          provider === "veo"
+            ? new Veo(cfg, videoKey)
+            : provider === "selfHosted"
+              ? new SelfHosted(cfg, videoKey)
+              : wan,
         comfy: graph ? new Comfy(cfg) : null,
         workflow: graph,
         persist: () => save(file, p),
@@ -468,6 +556,7 @@ app.whenReady().then(async () => {
         p.scenes.map((s) => path.join(folder, s.clip)),
         folder,
         cfg,
+        p.scenes.map(sceneSeconds),
       );
       if (p.scenes.some((s) => s.narration?.trim())) {
         emit("正在添加字幕和可选的 Windows 配音…");

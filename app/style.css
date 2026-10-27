@@ -67,6 +67,9 @@ p {
   grid-template-columns: 1fr 1fr;
   gap: 14px;
 }
+.grid .wide {
+  grid-column: 1 / -1;
+}
 label {
   display: block;
   color: #bdc9dd;

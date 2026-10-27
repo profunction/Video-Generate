@@ -153,9 +153,151 @@ class Wan {
     );
   }
 }
+
+// Seconds of video each provider returns per scene; a self-hosted clip keeps its own length.
+const CLIP_SECONDS = { wan: 5, veo: 8 };
+const sceneSeconds = (scene) => Number(scene.seconds) || 5;
+// Google Veo through the Gemini API: a long-running operation that is polled like a Wan task.
+class Veo {
+  constructor(settings, key, fetcher = fetch, pause = delay) {
+    this.settings = settings;
+    this.key = key;
+    this.fetch = fetcher;
+    this.pause = pause;
+  }
+  async request(route, body) {
+    const response = await this.fetch(
+      "https://generativelanguage.googleapis.com/v1beta/" + route,
+      {
+        method: body ? "POST" : "GET",
+        headers: {
+          "x-goog-api-key": this.key,
+          "Content-Type": "application/json",
+        },
+        body: body ? JSON.stringify(body) : undefined,
+        signal: AbortSignal.timeout(60000),
+      },
+    );
+    if (!response.ok) {
+      let detail = "";
+      try {
+        detail = (await response.json()).error?.message || "";
+      } catch {}
+      const error = new Error(
+        `Veo HTTP ${response.status}${detail ? ` (${detail.slice(0, 300)})` : ""}. Check model, quota and credentials.`,
+      );
+      error.retryable = response.status === 429 || response.status >= 500;
+      error.rejected = response.status >= 400 && response.status < 500;
+      throw error;
+    }
+    return response.json();
+  }
+  // The first frame is sent inline, so the scene starts from the drawn picture or the previous clip.
+  async submit(scene, imageFile) {
+    const instance = { prompt: scene.prompt };
+    if (imageFile) {
+      const content = await fs.readFile(imageFile);
+      if (content.length > 20 * 1024 * 1024) throw Error("Image exceeds 20 MB");
+      instance.image = {
+        bytesBase64Encoded: content.toString("base64"),
+        mimeType: /\.jpe?g$/i.test(imageFile) ? "image/jpeg" : "image/png",
+      };
+    }
+    // Never retry POST automatically: a lost response may still have created a paid job.
+    const data = await this.request(
+      `models/${this.settings.veoModel}:predictLongRunning`,
+      { instances: [instance], parameters: { aspectRatio: "16:9" } },
+    );
+    if (!/^models\/[\w.-]+\/operations\/[\w-]+$/.test(data.name || ""))
+      throw new Error(
+        "Veo returned no operation name. Check provider console before retrying.",
+      );
+    return data.name;
+  }
+  async poll(id, progress) {
+    for (let i = 0; i < 360; i++) {
+      let data;
+      for (let attempt = 0; attempt < 4; attempt++) {
+        try {
+          data = await this.request(id);
+          break;
+        } catch (error) {
+          if (!error.retryable || attempt === 3) throw error;
+          await this.pause(1000 * 2 ** attempt);
+        }
+      }
+      progress(data.done ? "DONE" : "RUNNING");
+      if (data.done) {
+        const uri =
+          data.response?.generateVideoResponse?.generatedSamples?.[0]?.video
+            ?.uri;
+        if (data.error || !uri) {
+          // A finished operation without a video (failed or filtered) can never deliver one.
+          const error = new Error(
+            `Task FAILED: ${data.error?.message || "Veo returned no video"}`,
+          );
+          error.taskStatus = "FAILED";
+          throw error;
+        }
+        if (!uri.startsWith("https://generativelanguage.googleapis.com/"))
+          throw new Error("Veo returned an unexpected video location");
+        return uri;
+      }
+      await this.pause(10000);
+    }
+    throw new Error(
+      "Polling timed out. Resume this task later; do not resubmit.",
+    );
+  }
+  // Veo video links need the API key, unlike Wan's signed URLs.
+  async download(uri, destination) {
+    const response = await this.fetch(uri, {
+      headers: { "x-goog-api-key": this.key },
+      signal: AbortSignal.timeout(300000),
+    });
+    if (!response.ok || !response.body)
+      throw new Error(`Veo download HTTP ${response.status}`);
+    await streamToFile(response, destination);
+  }
+}
+// A GPU server you run yourself (e.g. Wan2.1 or LTX-Video): POST /generate returns the MP4.
+class SelfHosted {
+  constructor(settings, key, fetcher = fetch) {
+    this.settings = settings;
+    this.key = key;
+    this.fetch = fetcher;
+  }
+  async generate(scene, destination) {
+    const base = new URL(this.settings.selfHostedUrl);
+    const response = await this.fetch(base.origin + "/generate", {
+      method: "POST",
+      headers: {
+        ...(this.key ? { "X-Inference-Key": this.key } : {}),
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({ prompt: scene.prompt }),
+      signal: AbortSignal.timeout(1800000),
+    });
+    if (!response.ok || !response.body)
+      throw new Error(`Self-hosted video HTTP ${response.status}`);
+    await streamToFile(response, destination);
+  }
+}
 function validate(project, settings) {
-  if (!ENDPOINTS[settings.region] || !/^wan[\w.-]+$/.test(settings.model))
-    throw new Error("Invalid Wan region or model");
+  const provider = settings.videoProvider || "wan";
+  if (!ENDPOINTS[settings.region]) throw new Error("Invalid Wan region");
+  if (provider === "wan" && !/^wan[\w.-]+$/.test(settings.model))
+    throw new Error("Invalid Wan model");
+  if (provider === "veo" && !/^veo[\w.-]+$/.test(settings.veoModel || ""))
+    throw new Error("Invalid Veo model");
+  if (provider === "selfHosted") {
+    let url;
+    try {
+      url = new URL(settings.selfHostedUrl);
+    } catch {}
+    if (!url || !["http:", "https:"].includes(url.protocol) || url.username)
+      throw new Error("Invalid self-hosted server address");
+  } else if (!CLIP_SECONDS[provider]) throw new Error("Invalid video provider");
   if (
     !Array.isArray(project.scenes) ||
     !project.scenes.length ||
@@ -169,7 +311,9 @@ function validate(project, settings) {
       scene.prompt.length > 2000
     )
       throw new Error("Each scene needs a prompt of at most 2000 characters");
+    // The self-hosted server works from the prompt alone.
     if (
+      provider === "selfHosted" ||
       scene.localImage ||
       (i > 0 && scene.continuePrevious) ||
       (!scene.image && scene.imagePrompt)
@@ -185,8 +329,8 @@ function validate(project, settings) {
       throw new Error("Use public HTTPS image URLs");
   }
   const pending = project.scenes.filter((s) => !s.taskId && !s.clip).length;
-  // Resuming or re-exporting submitted scenes spends nothing new.
-  if (!pending) return 0;
+  // Resuming or re-exporting submitted scenes spends nothing new; your own server is not billed here.
+  if (!pending || provider === "selfHosted") return 0;
   const rate = Number(settings.pricePerSecond),
     budget = Number(settings.budget);
   if (
@@ -196,7 +340,7 @@ function validate(project, settings) {
     budget <= 0
   )
     throw new Error("Enter a positive price per second and budget");
-  const estimate = pending * 5 * rate;
+  const estimate = pending * CLIP_SECONDS[provider] * rate;
   if (Number(project.reserved || 0) + estimate > budget + 1e-8)
     throw new Error(
       "Project budget exceeded. Review reserved spend and pricing.",
@@ -208,6 +352,9 @@ async function download(url, destination, fetcher = fetch) {
   const response = await fetcher(url, { signal: AbortSignal.timeout(300000) });
   if (!response.ok || !response.body)
     throw new Error(`Download HTTP ${response.status}`);
+  await streamToFile(response, destination);
+}
+async function streamToFile(response, destination) {
   const { Readable } = require("node:stream");
   const { pipeline } = require("node:stream/promises");
   const temporary = destination + ".part";
@@ -290,21 +437,21 @@ async function lastFrame(clip, target, settings) {
   ]);
   return target;
 }
-async function merge(clips, folder, settings) {
+// Every clip is cut or padded to its scene's length, so subtitles and narration never drift.
+async function merge(clips, folder, settings, seconds = clips.map(() => 5)) {
   const normalized = [];
   for (let i = 0; i < clips.length; i++) {
     await probe(clips[i], settings);
     const target = path.join(folder, `normalized-${i}.mp4`);
-    // Every scene lasts exactly 5 s so subtitles and narration never drift.
     await run(settings.ffmpeg, [
       "-y",
       "-i",
       clips[i],
       "-an",
       "-vf",
-      "scale=1280:720:force_original_aspect_ratio=decrease,pad=1280:720:(ow-iw)/2:(oh-ih)/2,setsar=1,fps=24,tpad=stop_mode=clone:stop_duration=5",
+      `scale=1280:720:force_original_aspect_ratio=decrease,pad=1280:720:(ow-iw)/2:(oh-ih)/2,setsar=1,fps=24,tpad=stop_mode=clone:stop_duration=${seconds[i]}`,
       "-t",
-      "5",
+      String(seconds[i]),
       "-c:v",
       "libx264",
       "-pix_fmt",
@@ -338,6 +485,10 @@ async function merge(clips, folder, settings) {
 module.exports = {
   ENDPOINTS,
   Wan,
+  Veo,
+  SelfHosted,
+  CLIP_SECONDS,
+  sceneSeconds,
   validate,
   download,
   merge,

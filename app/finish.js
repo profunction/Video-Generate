@@ -1,14 +1,16 @@
 const fs = require("node:fs/promises");
 const path = require("node:path");
-const { run } = require("./engine");
+const { run, sceneSeconds } = require("./engine");
 function timestamp(seconds) {
   return new Date(seconds * 1000).toISOString().slice(11, 23).replace(".", ",");
 }
 function subtitles(scenes) {
-  // Scenes without narration keep their 5 s slot but get no (empty, invalid) cue.
+  // Scenes without narration keep their time slot but get no (empty, invalid) cue.
+  let start = 0;
   return scenes
-    .map((s, i) => ({
-      i,
+    .map((s) => ({
+      start,
+      end: (start += sceneSeconds(s)),
       text: String(s.narration || "")
         .replace(/\s*[\r\n]+\s*/g, " ")
         .trim(),
@@ -16,7 +18,7 @@ function subtitles(scenes) {
     .filter((cue) => cue.text)
     .map(
       (cue, n) =>
-        `${n + 1}\n${timestamp(cue.i * 5)} --> ${timestamp((cue.i + 1) * 5)}\n${cue.text}\n`,
+        `${n + 1}\n${timestamp(cue.start)} --> ${timestamp(cue.end)}\n${cue.text}\n`,
     )
     .join("\n");
 }
@@ -33,6 +35,7 @@ async function finish(project, folder, cfg) {
       );
     const audio = [];
     for (let i = 0; i < project.scenes.length; i++) {
+      const seconds = sceneSeconds(project.scenes[i]);
       const text = path.join(folder, `voice-${i}.txt`),
         wav = path.join(folder, `voice-${i}.wav`),
         fixed = path.join(folder, `voice-${i}-normalized.wav`);
@@ -65,9 +68,9 @@ async function finish(project, folder, cfg) {
             wav,
           ]),
         );
-        if (Number(probe.format.duration) > 5)
+        if (Number(probe.format.duration) > seconds)
           throw Error(
-            `Scene ${i + 1} narration exceeds 5 seconds. Shorten its narration in the storyboard editor.`,
+            `Scene ${i + 1} narration exceeds ${seconds} seconds. Shorten its narration in the storyboard editor.`,
           );
         await run(cfg.ffmpeg, [
           "-y",
@@ -76,7 +79,7 @@ async function finish(project, folder, cfg) {
           "-af",
           "apad",
           "-t",
-          "5",
+          String(seconds),
           "-ar",
           "44100",
           "-ac",
@@ -91,7 +94,7 @@ async function finish(project, folder, cfg) {
           "-i",
           "anullsrc=r=44100:cl=stereo",
           "-t",
-          "5",
+          String(seconds),
           fixed,
         ]);
       audio.push(fixed);

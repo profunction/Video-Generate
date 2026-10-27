@@ -1,5 +1,8 @@
 const $ = (id) => document.getElementById(id);
 const fields = [
+  "videoProvider",
+  "veoModel",
+  "selfHostedUrl",
   "region",
   "model",
   "scriptSource",
@@ -104,10 +107,10 @@ function scene(data = {}) {
     data.imagePrompt,
     "imagePrompt",
   ).parentElement.classList.add("visual");
-  field("textarea", "Wan 镜头动作提示词", data.prompt, "prompt");
+  field("textarea", "镜头动作提示词", data.prompt, "prompt");
   field(
     "textarea",
-    "旁白 / 字幕（每镜头不超过 5 秒）",
+    "旁白 / 字幕（每镜头不超过 5 秒，Veo 8 秒）",
     data.narration,
     "narration",
   );
@@ -186,14 +189,18 @@ async function refresh() {
   }
 }
 async function saveSettings() {
-  const value = { key: $("key").value };
-  for (const f of fields) value[f] = $(f).value;
+  const value = {};
+  for (const f of [...fields, ...secrets]) value[f] = $(f).value;
   value.narration = value.narration === "true";
   await window.studio.saveSettings(value);
-  $("key").value = "";
-  $("keyStatus").textContent = (await window.studio.settings()).hasKey
-    ? "Key 已加密保存"
-    : "";
+  for (const f of secrets) $(f).value = "";
+  showKeys(await window.studio.settings());
+}
+const secrets = ["key", "veoKey", "selfHostedKey"];
+function showKeys(cfg) {
+  const provider = $("videoProvider").value;
+  const saved = provider === "wan" ? cfg.hasKey : cfg.keys?.[provider];
+  $("keyStatus").textContent = saved ? "Key 已加密保存" : "";
 }
 $("save").onclick = () =>
   action(async () => {
@@ -245,7 +252,11 @@ $("create").onclick = () =>
       scenes.some(
         (s) =>
           !s.prompt ||
-          (!s.continuePrevious && !s.image && !s.localImage && !s.imagePrompt),
+          ($("videoProvider").value !== "selfHosted" &&
+            !s.continuePrevious &&
+            !s.image &&
+            !s.localImage &&
+            !s.imagePrompt),
       )
     )
       throw Error(
@@ -293,8 +304,18 @@ function syncSources() {
   for (const el of document.querySelectorAll(".ollama-only"))
     el.hidden = $("scriptSource").value !== "ollama";
   for (const el of document.querySelectorAll(".comfy-only"))
-    el.hidden = $("imageSource").value !== "comfyui";
+    el.hidden =
+      $("imageSource").value !== "comfyui" ||
+      $("videoProvider").value === "selfHosted";
+  const provider = $("videoProvider").value;
+  for (const el of document.querySelectorAll(".veo-only"))
+    el.hidden = provider !== "veo";
+  for (const el of document.querySelectorAll(".selfhosted-only"))
+    el.hidden = provider !== "selfHosted";
+  for (const el of document.querySelectorAll(".paid-only"))
+    el.hidden = provider === "selfHosted";
 }
+$("videoProvider").onchange = syncSources;
 $("scriptSource").onchange = syncSources;
 $("imageSource").onchange = syncSources;
 window.studio.onProgress(status);
@@ -302,7 +323,7 @@ action(async () => {
   const cfg = await window.studio.settings();
   for (const f of fields) $(f).value = String(cfg[f] ?? "");
   syncSources();
-  $("keyStatus").textContent = cfg.hasKey ? "Key 已加密保存" : "";
+  showKeys(cfg);
   scene();
   await refresh();
 });
