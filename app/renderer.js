@@ -21,19 +21,33 @@ async function action(fn) {
   try {
     await fn();
   } catch (e) {
-    status(e.message);
+    status(
+      String(e.message).replace(
+        /^Error invoking remote method '[^']+': (?:Error: )?/,
+        "",
+      ),
+    );
   }
 }
 function scene(data = {}) {
   const row = document.createElement("div");
   row.className = "scene";
   row.dataset.localImage = data.localImage || "";
+  // Submitted scenes keep their visuals; only the narration can change.
+  const locked = Boolean(data.taskId || data.uncertain || data.clip);
+  if (locked) {
+    row.classList.add("locked");
+    const note = document.createElement("p");
+    note.textContent = "已提交到 Wan：画面已锁定，只能修改旁白";
+    row.append(note);
+  }
   function field(tag, label, value, kind) {
     const l = document.createElement("label");
     l.textContent = label;
     const el = document.createElement(tag);
     el.value = value || "";
     el.dataset.field = kind;
+    el.readOnly = locked && kind !== "narration";
     l.append(el);
     row.append(l);
     return el;
@@ -46,26 +60,28 @@ function scene(data = {}) {
   );
   const local = field("input", "本地图片", data.localImage, "localImage");
   local.readOnly = true;
-  const pick = document.createElement("button");
-  pick.textContent = "选择本地图片";
-  pick.className = "secondary";
-  pick.onclick = () =>
-    action(async () => {
-      const file = await window.studio.pickImage();
-      if (file) {
-        local.value = file;
-        row.dataset.localImage = file;
-      }
-    });
-  row.append(pick);
-  const clear = document.createElement("button");
-  clear.textContent = "清除本地图片";
-  clear.className = "secondary";
-  clear.onclick = () => {
-    local.value = "";
-    row.dataset.localImage = "";
-  };
-  row.append(clear);
+  if (!locked) {
+    const pick = document.createElement("button");
+    pick.textContent = "选择本地图片";
+    pick.className = "secondary";
+    pick.onclick = () =>
+      action(async () => {
+        const file = await window.studio.pickImage();
+        if (file) {
+          local.value = file;
+          row.dataset.localImage = file;
+        }
+      });
+    row.append(pick);
+    const clear = document.createElement("button");
+    clear.textContent = "清除本地图片";
+    clear.className = "secondary";
+    clear.onclick = () => {
+      local.value = "";
+      row.dataset.localImage = "";
+    };
+    row.append(clear);
+  }
   field(
     "textarea",
     "ComfyUI 图片提示词（没有图片时自动生图）",
@@ -101,8 +117,8 @@ function sceneValues() {
 async function runProject(id) {
   if (active) throw Error("任务正在运行");
   active = true;
-  await refresh();
   try {
+    await refresh();
     status("正在检查项目…");
     const result = await window.studio.run(id);
     if (result.canceled) status("已取消，未提交新任务");
@@ -114,11 +130,20 @@ async function runProject(id) {
 async function refresh() {
   const projects = await window.studio.list();
   $("projects").replaceChildren();
-  for (const p of projects.reverse()) {
+  for (const p of projects) {
     const row = document.createElement("div");
     row.className = "project";
     const name = document.createElement("strong");
     name.textContent = `${p.name} · ${p.scenes.length} 镜头 · 已预留 ${Number(p.reserved).toFixed(2)}`;
+    const open = document.createElement("button");
+    open.className = "secondary";
+    open.textContent = "打开项目文件夹";
+    open.onclick = () => action(() => window.studio.open(p.id));
+    if (p.broken) {
+      row.append(name, document.createElement("br"), open);
+      $("projects").append(row);
+      continue;
+    }
     const run = document.createElement("button");
     run.textContent = p.output ? "重新导出" : "生成 / 恢复";
     run.disabled = active;
@@ -137,10 +162,6 @@ async function refresh() {
       $("scenes").scrollIntoView({ behavior: "smooth" });
       status("已提交的镜头只可修改旁白；修改后重新导出。");
     };
-    const open = document.createElement("button");
-    open.className = "secondary";
-    open.textContent = "打开项目文件夹";
-    open.onclick = () => action(() => window.studio.open(p.id));
     row.append(name, document.createElement("br"), run, edit, open);
     $("projects").append(row);
   }

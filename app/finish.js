@@ -5,10 +5,18 @@ function timestamp(seconds) {
   return new Date(seconds * 1000).toISOString().slice(11, 23).replace(".", ",");
 }
 function subtitles(scenes) {
+  // Scenes without narration keep their 5 s slot but get no (empty, invalid) cue.
   return scenes
+    .map((s, i) => ({
+      i,
+      text: String(s.narration || "")
+        .replace(/\s*[\r\n]+\s*/g, " ")
+        .trim(),
+    }))
+    .filter((cue) => cue.text)
     .map(
-      (s, i) =>
-        `${i + 1}\n${timestamp(i * 5)} --> ${timestamp((i + 1) * 5)}\n${String(s.narration || "").replace(/[\r\n]+/g, " ")}\n`,
+      (cue, n) =>
+        `${n + 1}\n${timestamp(cue.i * 5)} --> ${timestamp((cue.i + 1) * 5)}\n${cue.text}\n`,
     )
     .join("\n");
 }

@@ -12,13 +12,41 @@ function localBase(value) {
     throw Error("Local AI address must use localhost or 127.0.0.1");
   return url.origin;
 }
+// Pull the useful part out of Ollama ({error}) and ComfyUI ({error, node_errors}) replies.
+function describe(body) {
+  try {
+    const data = JSON.parse(body);
+    const node = Object.values(data.node_errors || {})[0]?.errors?.[0];
+    return [data.error?.message || data.error, node?.details || node?.message]
+      .filter((v) => typeof v === "string" && v)
+      .join(" — ");
+  } catch {
+    return body;
+  }
+}
 async function json(url, options = {}, fetcher = fetch) {
-  const r = await fetcher(url, {
-    signal: AbortSignal.timeout(180000),
-    ...options,
-  });
-  if (!r.ok)
-    throw Error(`Local AI HTTP ${r.status}; check service, model and workflow`);
+  let r;
+  try {
+    r = await fetcher(url, {
+      signal: AbortSignal.timeout(180000),
+      ...options,
+    });
+  } catch (e) {
+    throw Error(
+      e.name === "TimeoutError"
+        ? `Local AI timed out: ${new URL(url).origin}`
+        : `Cannot reach ${new URL(url).origin}; start the service and check its address`,
+    );
+  }
+  if (!r.ok) {
+    let detail = "";
+    try {
+      detail = describe(await r.text()).slice(0, 300);
+    } catch {}
+    throw Error(
+      `Local AI HTTP ${r.status}; check service, model and workflow${detail ? ": " + detail : ""}`,
+    );
+  }
   return r.json();
 }
 async function storyboard(idea, count, cfg, fetcher = fetch) {
@@ -31,15 +59,40 @@ async function storyboard(idea, count, cfg, fetcher = fetch) {
     count > 20
   )
     throw Error("Enter a story idea and 1–20 scenes");
+  const text = { type: "string" };
   const data = await json(
     localBase(cfg.ollamaUrl) + "/api/chat",
     {
       method: "POST",
       headers: { "Content-Type": "application/json" },
+      // CPU-only machines can need many minutes for a long screenplay.
+      signal: AbortSignal.timeout(15 * 60000),
       body: JSON.stringify({
         model: cfg.ollamaModel,
         stream: false,
-        format: "json",
+        format: {
+          type: "object",
+          properties: {
+            title: text,
+            scenes: {
+              type: "array",
+              minItems: count,
+              maxItems: count,
+              items: {
+                type: "object",
+                properties: {
+                  prompt: text,
+                  imagePrompt: text,
+                  narration: text,
+                },
+                required: ["prompt", "imagePrompt", "narration"],
+              },
+            },
+          },
+          required: ["title", "scenes"],
+        },
+        // The default context window truncates long screenplays into invalid JSON.
+        options: { num_ctx: 8192 },
         messages: [
           {
             role: "system",
@@ -57,12 +110,13 @@ async function storyboard(idea, count, cfg, fetcher = fetch) {
   } catch {
     throw Error("Ollama returned invalid JSON; try a stronger model");
   }
-  if (!Array.isArray(parsed.scenes) || parsed.scenes.length !== count)
+  if (!Array.isArray(parsed?.scenes) || parsed.scenes.length < count)
     throw Error("Ollama scene count mismatch; retry script generation");
-  for (const s of parsed.scenes) {
+  const scenes = parsed.scenes.slice(0, count);
+  for (const s of scenes) {
     for (const field of ["prompt", "imagePrompt", "narration"])
       if (
-        typeof s[field] !== "string" ||
+        typeof s?.[field] !== "string" ||
         !s[field].trim() ||
         s[field].length > 2000
       )
@@ -70,10 +124,10 @@ async function storyboard(idea, count, cfg, fetcher = fetch) {
   }
   return {
     name: String(parsed.title || "AI Drama").slice(0, 100),
-    scenes: parsed.scenes.map((s) => ({
-      prompt: s.prompt,
-      imagePrompt: s.imagePrompt,
-      narration: s.narration,
+    scenes: scenes.map((s) => ({
+      prompt: s.prompt.trim(),
+      imagePrompt: s.imagePrompt.trim(),
+      narration: s.narration.trim(),
       image: "",
     })),
   };
@@ -90,7 +144,8 @@ function prepareWorkflow(template, prompt) {
       throw Error("Import ComfyUI API-format workflow, not UI workflow");
     for (const [k, v] of Object.entries(node.inputs)) {
       if (typeof v === "string" && v.includes("{{PROMPT}}")) {
-        node.inputs[k] = v.replaceAll("{{PROMPT}}", prompt);
+        // A replacer function keeps "$&", "$$" etc. in prompts literal.
+        node.inputs[k] = v.replaceAll("{{PROMPT}}", () => prompt);
         replaced = true;
       }
       if (["seed", "noise_seed"].includes(k) && typeof v === "number")
@@ -130,14 +185,35 @@ class Comfy {
       throw Error("ComfyUI rejected workflow; check models and nodes");
     return out.prompt_id;
   }
+  async job(id) {
+    const result = await json(
+      this.base + "/history/" + encodeURIComponent(id),
+      {},
+      this.fetch,
+    );
+    return result[id];
+  }
+  async queued(id) {
+    const queue = await json(this.base + "/queue", {}, this.fetch);
+    return [
+      ...(queue.queue_running || []),
+      ...(queue.queue_pending || []),
+    ].some((item) => item?.[1] === id);
+  }
   async image(id, target) {
     for (let i = 0; i < 720; i++) {
-      const result = await json(
-        this.base + "/history/" + encodeURIComponent(id),
-        {},
-        this.fetch,
-      );
-      const job = result[id];
+      let job = await this.job(id);
+      if (!job && !(await this.queued(id))) {
+        // Read history again: the job may have finished between both requests.
+        job = await this.job(id);
+        if (!job) {
+          const error = Error(
+            "ComfyUI no longer knows this job; it was probably restarted",
+          );
+          error.lost = true;
+          throw error;
+        }
+      }
       if (job?.status?.status_str === "error")
         throw Error("ComfyUI generation failed; check its console");
       if (job?.outputs) {
@@ -159,6 +235,9 @@ class Comfy {
             await fs.writeFile(target, data);
             return target;
           }
+        throw Error(
+          "ComfyUI finished without a saved image; the workflow needs a SaveImage output",
+        );
       }
       await this.pause(5000);
     }
@@ -173,10 +252,17 @@ async function checkServices(cfg, fetcher = fetch) {
   ]) {
     try {
       const out = await json(localBase(base) + route, {}, fetcher);
+      const names = out.models?.map((m) => m.name);
       report.push(
         name +
           ": connected" +
-          (out.models ? " · " + out.models.map((m) => m.name).join(", ") : ""),
+          (names ? " · " + names.join(", ") : "") +
+          (names &&
+          ![cfg.ollamaModel, cfg.ollamaModel + ":latest"].some((m) =>
+            names.includes(m),
+          )
+            ? `\nOllama: model ${cfg.ollamaModel} is not installed; run: ollama pull ${cfg.ollamaModel}`
+            : ""),
       );
     } catch (e) {
       report.push(name + ": " + e.message);

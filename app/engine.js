@@ -30,10 +30,17 @@ class Wan {
       signal: AbortSignal.timeout(60000),
     });
     if (!response.ok) {
+      let detail = "";
+      try {
+        const data = await response.json();
+        detail = [data.code, data.message].filter(Boolean).join(": ");
+      } catch {}
       const error = new Error(
-        `Wan HTTP ${response.status}. Check region, model, quota and credentials.`,
+        `Wan HTTP ${response.status}${detail ? ` (${detail.slice(0, 300)})` : ""}. Check region, model, quota and credentials.`,
       );
       error.retryable = response.status === 429 || response.status >= 500;
+      // A 4xx answer means the provider refused the request, so no paid task exists.
+      error.rejected = response.status >= 400 && response.status < 500;
       throw error;
     }
     const data = await response.json();
@@ -113,10 +120,13 @@ class Wan {
         if (!out.video_url) throw new Error("Missing video URL");
         return out.video_url;
       }
-      if (["FAILED", "CANCELED", "UNKNOWN"].includes(out.task_status))
-        throw new Error(
-          `Task ${out.task_status}: ${out.code || "see provider console"}`,
+      if (["FAILED", "CANCELED", "UNKNOWN"].includes(out.task_status)) {
+        const error = new Error(
+          `Task ${out.task_status}: ${[out.code, out.message].filter(Boolean).join(": ") || "see provider console"}`,
         );
+        error.taskStatus = out.task_status;
+        throw error;
+      }
       await this.pause(10000);
     }
     throw new Error(
@@ -150,6 +160,9 @@ function validate(project, settings) {
     if (url.protocol !== "https:" || url.username || url.password)
       throw new Error("Use public HTTPS image URLs");
   }
+  const pending = project.scenes.filter((s) => !s.taskId && !s.clip).length;
+  // Resuming or re-exporting submitted scenes spends nothing new.
+  if (!pending) return 0;
   const rate = Number(settings.pricePerSecond),
     budget = Number(settings.budget);
   if (
@@ -159,8 +172,7 @@ function validate(project, settings) {
     budget <= 0
   )
     throw new Error("Enter a positive price per second and budget");
-  const estimate =
-    project.scenes.filter((s) => !s.taskId && !s.clip).length * 5 * rate;
+  const estimate = pending * 5 * rate;
   if (Number(project.reserved || 0) + estimate > budget + 1e-8)
     throw new Error(
       "Project budget exceeded. Review reserved spend and pricing.",
@@ -188,10 +200,18 @@ async function download(url, destination, fetcher = fetch) {
 }
 function run(binary, args) {
   return new Promise((resolve, reject) => {
-    const child = spawn(binary, args, { windowsHide: true, shell: false });
-    let output = "";
+    const child = spawn(binary, args, {
+      windowsHide: true,
+      shell: false,
+      stdio: ["ignore", "pipe", "pipe"],
+    });
+    // Resolve with stdout only, so warnings on stderr cannot corrupt JSON output.
+    let output = "",
+      errors = "";
+    child.stdout.setEncoding("utf8");
+    child.stderr.setEncoding("utf8");
     child.stdout.on("data", (d) => (output = (output + d).slice(-100000)));
-    child.stderr.on("data", (d) => (output = (output + d).slice(-100000)));
+    child.stderr.on("data", (d) => (errors = (errors + d).slice(-100000)));
     child.on("error", () =>
       reject(
         new Error(
@@ -199,39 +219,54 @@ function run(binary, args) {
         ),
       ),
     );
-    child.on("close", (code) =>
-      code === 0
-        ? resolve(output)
-        : reject(
-            new Error(
-              `${path.basename(binary)} failed (${code}). Check media and executable configuration.`,
-            ),
-          ),
-    );
+    child.on("close", (code) => {
+      if (code === 0) return resolve(output);
+      const detail = (errors || output)
+        .split(/[\r\n]+/)
+        .map((line) => line.trim())
+        .filter(Boolean)
+        .slice(-3)
+        .join(" | ")
+        .slice(-500);
+      reject(
+        new Error(
+          `${path.basename(binary)} failed (${code})${detail ? ": " + detail : ". Check media and executable configuration."}`,
+        ),
+      );
+    });
   });
 }
-async function merge(clips, folder, settings) {
-  const normalized = [];
-  for (let i = 0; i < clips.length; i++) {
+async function probe(file, settings) {
+  const info = JSON.parse(
     await run(settings.ffprobe, [
       "-v",
       "error",
       "-show_entries",
-      "stream=codec_type",
+      "stream=codec_type:format=duration",
       "-of",
       "json",
-      clips[i],
-    ]);
+      file,
+    ]),
+  );
+  if (!info.streams?.some((s) => s.codec_type === "video"))
+    throw new Error(`${path.basename(file)} contains no video stream`);
+  return Number(info.format?.duration) || 0;
+}
+async function merge(clips, folder, settings) {
+  const normalized = [];
+  for (let i = 0; i < clips.length; i++) {
+    await probe(clips[i], settings);
     const target = path.join(folder, `normalized-${i}.mp4`);
+    // Every scene lasts exactly 5 s so subtitles and narration never drift.
     await run(settings.ffmpeg, [
       "-y",
       "-i",
       clips[i],
       "-an",
       "-vf",
-      "scale=1280:720:force_original_aspect_ratio=decrease,pad=1280:720:(ow-iw)/2:(oh-ih)/2,setsar=1",
-      "-r",
-      "24",
+      "scale=1280:720:force_original_aspect_ratio=decrease,pad=1280:720:(ow-iw)/2:(oh-ih)/2,setsar=1,fps=24,tpad=stop_mode=clone:stop_duration=5",
+      "-t",
+      "5",
       "-c:v",
       "libx264",
       "-pix_fmt",
@@ -262,4 +297,4 @@ async function merge(clips, folder, settings) {
   ]);
   return output;
 }
-module.exports = { Wan, validate, download, merge, run };
+module.exports = { Wan, validate, download, merge, run, probe };

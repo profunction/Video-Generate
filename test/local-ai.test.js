@@ -8,6 +8,7 @@ const {
   storyboard,
   prepareWorkflow,
   Comfy,
+  checkServices,
 } = require("../app/local-ai");
 const { Wan, validate, download, merge, run } = require("../app/engine");
 const { finish, subtitles } = require("../app/finish");
@@ -42,6 +43,10 @@ test("workflow replacement preserves links, does not mutate source, rejects UI f
     () => prepareWorkflow({ 1: { class_type: "SaveImage", inputs: {} } }, "x"),
     /PROMPT/,
   );
+  assert.equal(
+    prepareWorkflow(workflow, "a $$5 coin, $& and $'")["1"].inputs.text,
+    "cinematic a $$5 coin, $& and $'",
+  );
 });
 test("story generation validates returned scene count and structured fields", async () => {
   await assert.rejects(
@@ -51,6 +56,109 @@ test("story generation validates returned scene count and structured fields", as
         json: async () => ({ message: { content: '{"scenes":[]}' } }),
       })),
     /count mismatch/,
+  );
+});
+test("story generation constrains JSON, trims extra scenes and whitespace", async () => {
+  const story = await storyboard("story", 1, cfg, async (url, options) => {
+    const body = JSON.parse(options.body);
+    assert.equal(body.format.properties.scenes.minItems, 1);
+    assert.equal(body.options.num_ctx, 8192);
+    const scene = {
+      prompt: " Camera moves \n",
+      imagePrompt: "Hero",
+      narration: "Hi",
+    };
+    return {
+      ok: true,
+      json: async () => ({
+        message: {
+          content: JSON.stringify({ title: "T", scenes: [scene, scene] }),
+        },
+      }),
+    };
+  });
+  assert.equal(story.scenes.length, 1);
+  assert.equal(story.scenes[0].prompt, "Camera moves");
+});
+test("local AI errors explain unreachable services and provider replies", async () => {
+  await assert.rejects(
+    () =>
+      storyboard("story", 1, cfg, async () => {
+        throw new TypeError("fetch failed");
+      }),
+    /Cannot reach http:\/\/127\.0\.0\.1:11434/,
+  );
+  await assert.rejects(
+    () =>
+      storyboard("story", 1, cfg, async () => ({
+        ok: false,
+        status: 404,
+        text: async () =>
+          JSON.stringify({
+            error: 'model "test" not found, try pulling it first',
+          }),
+      })),
+    /404.*model "test" not found/,
+  );
+  const comfy = new Comfy(cfg, async () => ({
+    ok: false,
+    status: 400,
+    text: async () =>
+      JSON.stringify({
+        error: { message: "Prompt outputs failed validation" },
+        node_errors: {
+          1: { errors: [{ details: "ckpt_name: 'x.safetensors' not in []" }] },
+        },
+      }),
+  }));
+  await assert.rejects(
+    () => comfy.submit(workflow, "hero"),
+    /failed validation — ckpt_name: 'x\.safetensors' not in/,
+  );
+  const report = await checkServices(cfg, async (url) => ({
+    ok: true,
+    json: async () =>
+      url.endsWith("/api/tags") ? { models: [{ name: "other:latest" }] } : {},
+  }));
+  assert.match(report, /ollama pull test/);
+});
+test("ComfyUI polling stops on finished jobs without images and on lost jobs", async () => {
+  const history = (job) => async (url) => ({
+    ok: true,
+    json: async () =>
+      url.includes("/history/")
+        ? job
+        : { queue_running: [[1, "queued"]], queue_pending: [] },
+  });
+  const noImage = new Comfy(
+    cfg,
+    history({ done: { outputs: {}, status: { status_str: "success" } } }),
+    async () => assert.fail("must not wait"),
+  );
+  await assert.rejects(() => noImage.image("done", "x.png"), /SaveImage/);
+  const lost = new Comfy(cfg, history({}), async () =>
+    assert.fail("must not wait"),
+  );
+  await assert.rejects(
+    () => lost.image("gone", "x.png"),
+    (e) => e.lost === true,
+  );
+  let waits = 0;
+  const queued = new Comfy(cfg, history({}), async () => {
+    if (++waits === 2) throw Error("still queued");
+  });
+  await assert.rejects(() => queued.image("queued", "x.png"), /still queued/);
+  assert.equal(waits, 2);
+});
+test("subtitles skip scenes without narration but keep their time slots", () => {
+  const text = subtitles([
+    { narration: "first" },
+    { narration: "  " },
+    { narration: "third" },
+  ]);
+  assert.equal(
+    text,
+    "1\n00:00:00,000 --> 00:00:05,000\nfirst\n\n2\n00:00:10,000 --> 00:00:15,000\nthird\n",
   );
 });
 test("subtitles use scene boundaries and remove injected newlines", () => {
@@ -274,6 +382,15 @@ test("Windows installed SAPI voice renders audio into the exported drama", async
     );
     assert.ok(probe.streams.some((s) => s.codec_type === "audio"));
     assert.ok(probe.streams.some((s) => s.codec_type === "subtitle"));
+    await assert.rejects(
+      () =>
+        finish({ scenes: [{ narration: "Hello world" }] }, folder, {
+          ...cfg,
+          narration: true,
+          voice: "Missing Voice",
+        }),
+      /SAPI voice 'Missing Voice' is not installed\. Installed voices: \w/,
+    );
   } finally {
     await fs.rm(folder, { recursive: true, force: true });
   }

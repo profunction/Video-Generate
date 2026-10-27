@@ -113,6 +113,9 @@ button:disabled {
   padding-left: 16px;
   margin-top: 24px;
 }
+.scene.locked {
+  border-left-color: #5b6578;
+}
 .project {
   padding: 14px 0;
   border-bottom: 1px solid #303c51;

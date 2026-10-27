@@ -29,6 +29,15 @@ test("budget includes reserved spend and excludes previously submitted jobs", ()
     /HTTPS/,
   );
 });
+test("submitted scenes can be re-exported without price or budget", () => {
+  assert.equal(
+    validate(
+      { scenes: [{ ...scene, clip: "clip-1.mp4", taskId: "t" }], reserved: 5 },
+      { ...cfg, pricePerSecond: 0 },
+    ),
+    0,
+  );
+});
 test("paid submission uses correct async payload and never retries", async () => {
   let calls = 0;
   const wan = new Wan(cfg, "secret", async (url, options) => {
@@ -37,8 +46,27 @@ test("paid submission uses correct async payload and never retries", async () =>
     assert.equal(JSON.parse(options.body).input.img_url, scene.image);
     return { ok: false, status: 503 };
   });
-  await assert.rejects(() => wan.submit(scene), /503/);
+  await assert.rejects(
+    () => wan.submit(scene),
+    (e) => /503/.test(e.message) && e.retryable && !e.rejected,
+  );
   assert.equal(calls, 1);
+});
+test("a refused submission reports the provider reason and is definitive", async () => {
+  const wan = new Wan(cfg, "secret", async () => ({
+    ok: false,
+    status: 400,
+    json: async () => ({
+      code: "InvalidParameter",
+      message: "The image size is too large",
+    }),
+  }));
+  await assert.rejects(
+    () => wan.submit(scene),
+    (e) =>
+      /InvalidParameter: The image size is too large/.test(e.message) &&
+      e.rejected === true,
+  );
 });
 test("poll retries transient errors then returns video without new submission", async () => {
   let calls = 0;
@@ -79,7 +107,27 @@ test("failed jobs stop polling", async () => {
     }),
     async () => {},
   );
-  await assert.rejects(() => wan.poll("task", () => {}), /InvalidImage/);
+  await assert.rejects(
+    () => wan.poll("task", () => {}),
+    (e) => /InvalidImage/.test(e.message) && e.taskStatus === "FAILED",
+  );
+});
+test("tools resolve with stdout only and fail with their own message", async () => {
+  assert.equal(
+    await run(process.execPath, [
+      "-e",
+      "process.stdout.write(JSON.stringify({ ok: 1 })); process.stderr.write('warning')",
+    ]),
+    '{"ok":1}',
+  );
+  await assert.rejects(
+    () =>
+      run(process.execPath, [
+        "-e",
+        "console.error('Invalid data found'); process.exit(3)",
+      ]),
+    /failed \(3\): Invalid data found/,
+  );
 });
 test("FFmpeg normalizes and concatenates different frame sizes", async (t) => {
   try {
@@ -120,7 +168,8 @@ test("FFmpeg normalizes and concatenates different frame sizes", async (t) => {
         out,
       ]),
     );
-    assert.ok(Number(probe.format.duration) >= 0.9);
+    // Each scene is padded or trimmed to exactly 5 seconds.
+    assert.ok(Math.abs(Number(probe.format.duration) - 10) < 0.05);
   } finally {
     await fs.rm(folder, { recursive: true, force: true });
   }
