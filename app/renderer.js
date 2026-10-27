@@ -189,24 +189,45 @@ async function refresh() {
     $("projects").append(row);
   }
 }
+// Resolves true when a new key was typed in and saved.
 async function saveSettings() {
   const value = {};
-  for (const f of [...fields, ...secrets]) value[f] = $(f).value;
+  for (const f of [...fields, ...Object.keys(secrets)]) value[f] = $(f).value;
   value.narration = value.narration === "true";
+  const entered = Object.keys(secrets).some((f) => value[f].trim());
   await window.studio.saveSettings(value);
-  for (const f of secrets) $(f).value = "";
+  // Saved keys are never sent back to this window, so the boxes are emptied on purpose.
+  for (const f of Object.keys(secrets)) $(f).value = "";
   showKeys(await window.studio.settings());
+  return entered;
 }
-const secrets = ["key", "veoKey", "zhipuKey", "selfHostedKey"];
+const secrets = {
+  key: ["wan", "阿里云"],
+  veoKey: ["veo", "Gemini"],
+  zhipuKey: ["zhipu", "智谱"],
+  selfHostedKey: ["selfHosted", "自建服务器"],
+};
+// Each key box says whether a key is saved, because the key itself is not shown again.
 function showKeys(cfg) {
-  const provider = $("videoProvider").value;
-  const saved = provider === "wan" ? cfg.hasKey : cfg.keys?.[provider];
-  $("keyStatus").textContent = saved ? "Key 已加密保存" : "";
+  const saved = [];
+  for (const [field, [service, name]] of Object.entries(secrets)) {
+    const has = Boolean(cfg.keys?.[service]);
+    $(field).placeholder = has
+      ? "✓ 已加密保存（为了安全不显示）。要更换就输入新的"
+      : "还没有保存：粘贴后点保存设置";
+    if (has) saved.push(name);
+  }
+  $("keyStatus").textContent = saved.length
+    ? `已加密保存的 Key：${saved.join("、")}`
+    : "";
 }
 $("save").onclick = () =>
   action(async () => {
-    await saveSettings();
-    status("设置已保存");
+    status(
+      (await saveSettings())
+        ? "设置已保存。Key 已加密保存在这台电脑上；为了安全，输入框会清空，这是正常的。"
+        : "设置已保存",
+    );
   });
 // Buttons that talk to Ollama or ComfyUI save the addresses on screen first.
 $("checkLocal").onclick = () =>
