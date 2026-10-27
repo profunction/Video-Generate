@@ -84,15 +84,18 @@
         ><button class="secondary" id="checkLocal">
           检测 Ollama / ComfyUI / FFmpeg</button
         ><button class="secondary" id="workflow">
-          导入 ComfyUI API 工作流
-        </button>
+          导入自己的 ComfyUI 工作流（可选）</button
+        ><button class="secondary" id="builtin">改用内置工作流</button>
         <details>
           <summary>首次配置本地 AI</summary>
           <p>
-            先安装 Ollama，然后在终端运行 ollama pull qwen2.5:7b。安装 ComfyUI
-            与适合硬件的模型并启动服务；在 ComfyUI 中导出 API 格式的工作流
-            JSON，把正向提示词替换为 {{PROMPT}}，保留负向提示词，确保包含
-            SaveImage 节点，然后在此导入。无需 ComfyUI
+            先安装 Ollama，然后在终端运行 ollama pull qwen2.5:7b。用 ComfyUI
+            画图时，安装 ComfyUI，把 SD1.5 模型（例如
+            v1-5-pruned-emaonly-fp16.safetensors）放进 models/checkpoints
+            并启动服务即可：应用自带 SD1.5
+            工作流，会自动使用你装好的模型，不需要导入。想用自己的工作流时，导出
+            API 格式 JSON，把正向提示词替换为 {{PROMPT}}，确保包含 SaveImage
+            节点，再点“导入自己的 ComfyUI 工作流”。无需 ComfyUI
             时，直接选择本地图片或填写图片网址。应用连接这些服务，不包含模型和服务安装程序。
           </p>
         </details>
@@ -124,8 +127,8 @@
         ><button id="automatic">一键生成完整短剧</button>
         <p>
           一键流程：Ollama 剧本 → ComfyUI 分镜图片 → 上传阿里云 → Wan 视频 →
-          配音 / 字幕 /
-          MP4。需先保存设置并导入可用工作流；付费调用仍需确认。也可手动填写或选择本地图片。连续模式只需要第
+          配音 / 字幕 / MP4。需先保存设置并启动 ComfyUI（应用自带 SD1.5
+          工作流）；付费调用仍需确认。也可手动填写或选择本地图片。连续模式只需要第
           1 个镜头的图片，后面的镜头从上一个镜头的最后一帧接着拍。字幕为 MP4
           可选字幕轨，同时导出 SRT。每镜头旁白需控制在 5 秒以内。
         </p>

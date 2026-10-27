@@ -1,6 +1,8 @@
 const fs = require("node:fs/promises");
 const path = require("node:path");
 const crypto = require("node:crypto");
+// Used when no workflow was imported; the checkpoint is matched to ComfyUI's models.
+const builtInWorkflow = require("./sd15-workflow.json");
 function localBase(value) {
   const url = new URL(value);
   if (
@@ -164,6 +166,15 @@ function prepareWorkflow(template, prompt) {
     throw Error("Workflow must include SaveImage");
   return graph;
 }
+// Prefer an SD1.5 checkpoint; skip SDXL, Flux, SD2/3 and video models this workflow cannot drive.
+function pickCheckpoint(names) {
+  const sd15 = /v1[-_.]?5|sd[-_]?1[-_.]?5/i;
+  const other =
+    /xl|flux|sd[-_]?[23]|v2[-_.]?[01]|cascade|svd|hunyuan|wan|ltx|pony|illustrious|hidream|qwen|kolors|pixart/i;
+  return (
+    names.find((n) => sd15.test(n)) || names.find((n) => !other.test(n)) || null
+  );
+}
 class Comfy {
   constructor(
     cfg,
@@ -174,14 +185,49 @@ class Comfy {
     this.fetch = fetcher;
     this.pause = pause;
   }
+  async checkpoints() {
+    const info = await json(
+      this.base + "/object_info/CheckpointLoaderSimple",
+      {},
+      this.fetch,
+    );
+    const spec = info.CheckpointLoaderSimple?.input?.required?.ckpt_name;
+    const names = spec?.[0] === "COMBO" ? spec[1]?.options : spec?.[0];
+    return Array.isArray(names) ? names : [];
+  }
+  // Swaps checkpoint names ComfyUI does not have (such as the example's placeholder)
+  // for an installed SD1.5 model, and returns the models the graph will load.
+  async resolve(graph) {
+    const loaders = Object.values(graph).filter(
+      (n) => n.class_type === "CheckpointLoaderSimple",
+    );
+    if (!loaders.length) return [];
+    const installed = await this.checkpoints();
+    for (const node of loaders) {
+      if (installed.includes(node.inputs.ckpt_name)) continue;
+      const model = pickCheckpoint(installed);
+      if (!model)
+        throw Error(
+          "ComfyUI has no SD1.5 model; put v1-5-pruned-emaonly-fp16.safetensors into ComfyUI/models/checkpoints and press R in ComfyUI",
+        );
+      node.inputs.ckpt_name = model;
+    }
+    return loaders.map((n) => n.inputs.ckpt_name);
+  }
+  // Checks the connection and the model before anything is paid for.
+  async ready(template) {
+    return this.resolve(prepareWorkflow(template, "preflight"));
+  }
   async submit(template, prompt) {
+    const graph = prepareWorkflow(template, prompt);
+    await this.resolve(graph);
     const out = await json(
       this.base + "/prompt",
       {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          prompt: prepareWorkflow(template, prompt),
+          prompt: graph,
           client_id: crypto.randomUUID(),
         }),
       },
@@ -280,6 +326,8 @@ module.exports = {
   localBase,
   storyboard,
   prepareWorkflow,
+  pickCheckpoint,
+  builtInWorkflow,
   Comfy,
   checkServices,
 };

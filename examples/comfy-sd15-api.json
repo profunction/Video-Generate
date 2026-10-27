@@ -1,7 +1,7 @@
 {
   "1": {
     "class_type": "CheckpointLoaderSimple",
-    "inputs": { "ckpt_name": "REPLACE_WITH_YOUR_SD15_CHECKPOINT.safetensors" }
+    "inputs": { "ckpt_name": "v1-5-pruned-emaonly-fp16.safetensors" }
   },
   "2": {
     "class_type": "CLIPTextEncode",
@@ -16,7 +16,7 @@
   },
   "4": {
     "class_type": "EmptyLatentImage",
-    "inputs": { "width": 768, "height": 512, "batch_size": 1 }
+    "inputs": { "width": 912, "height": 512, "batch_size": 1 }
   },
   "5": {
     "class_type": "KSampler",

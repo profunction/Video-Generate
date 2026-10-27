@@ -202,6 +202,11 @@ $("workflow").onclick = () =>
   action(async () => {
     if (await window.studio.importWorkflow()) status("API 工作流已导入");
   });
+$("builtin").onclick = () =>
+  action(async () => {
+    await window.studio.resetWorkflow();
+    status("已改用内置 SD1.5 工作流，会自动使用 ComfyUI 里装好的模型");
+  });
 $("add").onclick = () => scene();
 $("newProject").onclick = () => {
   editing = null;

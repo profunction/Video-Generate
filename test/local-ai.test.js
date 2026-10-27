@@ -7,6 +7,8 @@ const {
   localBase,
   storyboard,
   prepareWorkflow,
+  pickCheckpoint,
+  builtInWorkflow,
   Comfy,
   checkServices,
 } = require("../app/local-ai");
@@ -166,6 +168,81 @@ test("ComfyUI polling stops on finished jobs without images and on lost jobs", a
   });
   await assert.rejects(() => queued.image("queued", "x.png"), /still queued/);
   assert.equal(waits, 2);
+});
+test("an SD1.5 checkpoint is preferred over SDXL, Flux and SD2 models", () => {
+  assert.equal(
+    pickCheckpoint([
+      "sd_xl_base_1.0.safetensors",
+      "v1-5-pruned-emaonly-fp16.safetensors",
+    ]),
+    "v1-5-pruned-emaonly-fp16.safetensors",
+  );
+  assert.equal(
+    pickCheckpoint(["flux1-dev.safetensors", "dreamshaper_8.safetensors"]),
+    "dreamshaper_8.safetensors",
+  );
+  assert.equal(
+    pickCheckpoint(["juggernautXL_v9.safetensors", "v2-1_768-ema-pruned.ckpt"]),
+    null,
+  );
+});
+test("the built-in workflow uses the installed SD1.5 model without an import", async () => {
+  const sent = [];
+  const fetcher =
+    (names) =>
+    async (url, options = {}) => {
+      const u = new URL(url);
+      if (u.pathname === "/object_info/CheckpointLoaderSimple")
+        return {
+          ok: true,
+          json: async () => ({
+            CheckpointLoaderSimple: {
+              input: { required: { ckpt_name: names } },
+            },
+          }),
+        };
+      if (u.pathname === "/prompt") {
+        sent.push(JSON.parse(options.body).prompt);
+        return { ok: true, json: async () => ({ prompt_id: "p1" }) };
+      }
+      throw Error("Unexpected request " + url);
+    };
+  // Classic list format, with the example's placeholder name in an imported copy.
+  const comfy = new Comfy(
+    cfg,
+    fetcher([["sd_xl_base_1.0.safetensors", "my-sd15.safetensors"], {}]),
+  );
+  assert.deepEqual(await comfy.ready(builtInWorkflow), ["my-sd15.safetensors"]);
+  await comfy.submit(builtInWorkflow, "a clockmaker");
+  assert.equal(sent[0]["1"].inputs.ckpt_name, "my-sd15.safetensors");
+  assert.equal(
+    sent[0]["2"].inputs.text,
+    "cinematic still, consistent characters, a clockmaker",
+  );
+  assert.equal(sent[0]["4"].inputs.width, 912);
+  assert.equal(
+    builtInWorkflow["1"].inputs.ckpt_name,
+    "v1-5-pruned-emaonly-fp16.safetensors",
+  );
+  // Newer COMBO format; an installed name that matches is kept as it is.
+  const combo = new Comfy(
+    cfg,
+    fetcher([
+      "COMBO",
+      {
+        options: ["v1-5-pruned-emaonly-fp16.safetensors", "other.safetensors"],
+      },
+    ]),
+  );
+  assert.deepEqual(await combo.ready(builtInWorkflow), [
+    "v1-5-pruned-emaonly-fp16.safetensors",
+  ]);
+  // Without any SD1.5 model the user is told what to download.
+  const none = new Comfy(cfg, fetcher([["sd_xl_base_1.0.safetensors"], {}]));
+  await assert.rejects(
+    () => none.ready(builtInWorkflow),
+    /v1-5-pruned-emaonly-fp16\.safetensors/,
+  );
 });
 test("subtitles skip scenes without narration but keep their time slots", () => {
   const text = subtitles([

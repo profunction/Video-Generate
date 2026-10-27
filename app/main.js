@@ -16,6 +16,7 @@ const {
   Comfy,
   checkServices,
   prepareWorkflow,
+  builtInWorkflow,
 } = require("./local-ai");
 const { finish } = require("./finish");
 const { produce } = require("./pipeline");
@@ -55,6 +56,11 @@ async function save(file, value) {
   await fs.mkdir(path.dirname(file), { recursive: true });
   await fs.writeFile(file + ".tmp", JSON.stringify(value, null, 2));
   await fs.rename(file + ".tmp", file);
+}
+// An imported workflow wins; otherwise the built-in SD1.5 one is used.
+async function workflow() {
+  const imported = await read(path.join(root(), "workflow.json"), null);
+  return { graph: imported || builtInWorkflow, imported: Boolean(imported) };
 }
 async function settings() {
   return {
@@ -210,11 +216,18 @@ app.whenReady().then(async () => {
   ipcMain.handle("local:check", async () => {
     const cfg = await settings();
     const report = [await checkServices(cfg)];
+    const flow = await workflow();
+    let models = "";
+    try {
+      const used = await new Comfy(cfg).ready(flow.graph);
+      if (used.length) models = ` · model ${used.join(", ")}`;
+    } catch (e) {
+      // The ComfyUI line above already reports an unreachable service or a bad address.
+      if (!/Cannot reach|timed out|localhost/.test(e.message))
+        models = ` · ${e.message}`;
+    }
     report.push(
-      "ComfyUI workflow: " +
-        ((await exists(path.join(root(), "workflow.json")))
-          ? "imported"
-          : "not imported (only needed for scenes without images)"),
+      `ComfyUI workflow: ${flow.imported ? "imported" : "built-in SD1.5"}${models}`,
     );
     for (const [name, binary] of [
       ["FFmpeg", cfg.ffmpeg],
@@ -263,6 +276,10 @@ app.whenReady().then(async () => {
     prepareWorkflow(graph, "test");
     await save(path.join(root(), "workflow.json"), graph);
     return true;
+  });
+  ipcMain.handle("workflow:reset", async () => {
+    if (busy) throw Error("Generation is running");
+    await fs.rm(path.join(root(), "workflow.json"), { force: true });
   });
   ipcMain.handle("project:update", async (_, id, scenes) => {
     if (busy) throw Error("Generation is running");
@@ -349,12 +366,12 @@ app.whenReady().then(async () => {
           !s.image &&
           !(i > 0 && s.continuePrevious),
       );
-      const workflow = needsComfy
-        ? await read(path.join(root(), "workflow.json"), null)
-        : null;
-      if (needsComfy && !workflow)
-        throw Error("Import a ComfyUI API workflow first, or provide images");
-      if (workflow) prepareWorkflow(workflow, "preflight");
+      const graph = needsComfy ? (await workflow()).graph : null;
+      // Check ComfyUI and its model before the approval dialog, so nothing is paid for first.
+      if (graph) {
+        emit("正在检查 ComfyUI 和模型…");
+        await new Comfy(cfg).ready(graph);
+      }
       const folder = path.dirname(file);
       // A deleted clip is downloaded again from its task, which needs the key too.
       let needsCloud = false;
@@ -377,8 +394,8 @@ app.whenReady().then(async () => {
       }
       await produce(p, folder, cfg, {
         wan: new Wan(cfg, key),
-        comfy: workflow ? new Comfy(cfg) : null,
-        workflow,
+        comfy: graph ? new Comfy(cfg) : null,
+        workflow: graph,
         persist: () => save(file, p),
         emit,
       });

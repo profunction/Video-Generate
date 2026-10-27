@@ -16,12 +16,12 @@ ComfyUI 可选；也可以直接选择本地图片或填写 HTTPS 图片网址�
 
 1. 安装 [Ollama for Windows](https://ollama.com/download/windows)，在终端运行 `ollama pull qwen2.5:7b`。需要 Ollama 0.5 或更新版本（使用结构化 JSON 输出）。模型名称可改成你已有的模型。默认地址 `http://127.0.0.1:11434`。
 2. 可选：安装 [ComfyUI](https://docs.comfy.org/installation/desktop/windows) 与适合电脑的生图模型，启动服务。默认连接地址 `http://127.0.0.1:8188`，以实际启动日志为准。硬件不适合本地生图时，跳过 ComfyUI，使用已有图片。
-3. 在 ComfyUI 中先确认工作流能成功出图，再**导出 API 格式 JSON**（不是普通界面工作流）。将正向文本提示词中的故事内容替换为 `{{PROMPT}}`，保留负向提示词，确保包含 `SaveImage` 节点。在本应用点击“导入 ComfyUI API 工作流”。只导入可信的工作流，模型和自定义节点须事先安装。
-   - 仓库提供 [SD1.5 示例工作流](examples/comfy-sd15-api.json)。先将 `ckpt_name` 改成 ComfyUI `models/checkpoints` 下已安装的 SD1.5 文件名，再导入。SDXL / Flux 等模型需要各自兼容的工作流。
+3. 用 ComfyUI 画图时，把 SD1.5 模型（例如 [`v1-5-pruned-emaonly-fp16.safetensors`](https://huggingface.co/Comfy-Org/stable-diffusion-v1-5-archive/blob/main/v1-5-pruned-emaonly-fp16.safetensors)）放进 ComfyUI 的 `models/checkpoints`，启动 ComfyUI 即可。应用**自带 SD1.5 画图工作流**（912×512，接近 16:9），会自动使用 ComfyUI 里装好的 SD1.5 模型，不需要导入任何文件。
+   - 想用自己的工作流（例如 SDXL / Flux）：在 ComfyUI 导出 **API 格式 JSON**，把正向提示词替换为 `{{PROMPT}}`，确保包含 `SaveImage` 节点，再点“导入自己的 ComfyUI 工作流（可选）”。只导入可信的工作流，模型和自定义节点须事先安装。工作流里的模型在 ComfyUI 中找不到时，会自动换成已安装的 SD1.5 模型。点“改用内置工作流”可以回到内置工作流。[示例工作流](examples/comfy-sd15-api.json)与内置工作流相同。
 4. 安装 [FFmpeg](https://www.gyan.dev/ffmpeg/builds/)，把 FFmpeg 和 FFprobe 加入 PATH，或在应用填写两个 `.exe` 的完整路径。
 5. 在应用填写阿里云百炼 / DashScope API Key、相匹配的北京或新加坡区域及该区域可用的 Wan 模型。默认 `wan2.2-i2v-flash`，固定请求 5 秒、720P。按官方当前报价填写每秒价格和项目预算，币种相同。价格默认 0，未填写前无法付费生成。
 6. 按需开启“Windows 配音”。系统须安装相应语言的传统 SAPI 桌面语音；Windows 设置中的部分自然语音不支持 System.Speech。语音名称可留空使用默认语音，或填写已安装的 SAPI 名称；名称填错时，错误提示会列出本机已安装的语音。每镜头旁白须短于 5 秒，过长时程序会提示编辑，不会静默裁切。
-7. 点击“保存设置”，再点击“检测 Ollama / ComfyUI / FFmpeg”，它会检查服务连接、Ollama 模型是否已拉取、工作流是否已导入，以及 FFmpeg / FFprobe 能否启动。应用连接这些已安装的服务；**安装包不包含 Ollama、ComfyUI、模型、FFmpeg**，不会自动下载大型模型。
+7. 点击“保存设置”，再点击“检测 Ollama / ComfyUI / FFmpeg”，它会检查服务连接、Ollama 模型是否已拉取、用的是内置还是导入的工作流以及会用哪个 ComfyUI 模型，还有 FFmpeg / FFprobe 能否启动。应用连接这些已安装的服务；**安装包不包含 Ollama、ComfyUI、模型、FFmpeg**，不会自动下载大型模型。
 
 ## 一键生成
 
