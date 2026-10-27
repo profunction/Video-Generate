@@ -326,7 +326,20 @@ test("a failed or refused Zhipu task is definitive", async () => {
   );
   await assert.rejects(
     () => refused.submit({ prompt: "Walk" }),
-    (e) => e.rejected && /1211: 模型不存在/.test(e.message),
+    (e) =>
+      e.rejected &&
+      /视频模型“cogvideox-flash”不存在（1211）/.test(e.message) &&
+      /bigmodel\.cn/.test(e.message),
+  );
+  const broke = new Zhipu(zhipuCfg, "z-key", async () =>
+    Response.json(
+      { error: { code: "1113", message: "余额不足或无可用资源包" } },
+      { status: 429 },
+    ),
+  );
+  await assert.rejects(
+    () => broke.submit({ prompt: "Walk" }),
+    (e) => e.rejected && /1113: 余额不足/.test(e.message),
   );
 });
 test("Zhipu is free and can work from the prompt alone", () => {

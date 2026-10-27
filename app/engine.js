@@ -282,15 +282,18 @@ class Zhipu {
       },
     );
     if (!response.ok) {
-      let detail = "";
+      let code = "",
+        detail = "";
       try {
         const data = await response.json();
-        detail = [data.error?.code, data.error?.message]
-          .filter(Boolean)
-          .join(": ");
+        code = String(data.error?.code ?? "");
+        detail = [code, data.error?.message].filter(Boolean).join(": ");
       } catch {}
       const error = new Error(
-        `智谱 HTTP ${response.status}${detail ? ` (${detail.slice(0, 300)})` : ""}。请检查 API Key、模型名称和账号额度。`,
+        // 1211: the model code is unknown for this key, e.g. a key made on Z.ai instead of bigmodel.cn.
+        code === "1211"
+          ? `智谱说视频模型“${this.settings.zhipuModel}”不存在（1211）。请确认 API Key 是在 bigmodel.cn（智谱国内平台）创建的，不是 Z.ai；再登录 bigmodel.cn，在体验中心看能不能用这个模型生成视频。模型编码不一样时，把它填到“设置 → 高级设置 → 智谱视频模型”。`
+          : `智谱 HTTP ${response.status}${detail ? ` (${detail.slice(0, 300)})` : ""}。请检查 API Key、模型名称和账号额度。`,
       );
       error.retryable = response.status === 429 || response.status >= 500;
       error.rejected = response.status >= 400 && response.status < 500;
