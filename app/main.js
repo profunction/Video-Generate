@@ -348,14 +348,24 @@ app.whenReady().then(async () => {
       const cfg = await settings();
       const cloud = cfg.scriptSource === "cloud";
       emit(cloud ? "阿里云正在写剧本…" : "Ollama 正在生成剧本…");
-      return await storyboard(
-        idea,
-        Number(count),
-        cfg,
-        fetch,
-        Boolean(continuous),
-        cloud ? await readKey() : "",
-      );
+      const key = cloud ? await readKey() : "";
+      try {
+        return await storyboard(
+          idea,
+          Number(count),
+          cfg,
+          fetch,
+          Boolean(continuous),
+          key,
+        );
+      } catch (e) {
+        // Customers rarely run Ollama on purpose: say how to switch to the cloud instead.
+        if (!cloud && /Cannot reach|timed out/.test(e.message))
+          throw Error(
+            `连不上本机 Ollama（${cfg.ollamaUrl}）。不想安装 Ollama：在“01 / 设置”把“剧本由谁写”改成“阿里云通义千问”，点保存设置后再生成剧本。要用 Ollama：先启动它，默认地址是 http://127.0.0.1:11434。`,
+          );
+        throw e;
+      }
     } finally {
       busy = false;
     }
