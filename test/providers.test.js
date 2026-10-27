@@ -3,7 +3,14 @@ const assert = require("node:assert/strict");
 const fs = require("node:fs/promises");
 const os = require("node:os");
 const path = require("node:path");
-const { Veo, SelfHosted, validate, merge, run } = require("../app/engine");
+const {
+  Veo,
+  SelfHosted,
+  Zhipu,
+  validate,
+  merge,
+  run,
+} = require("../app/engine");
 const { produce } = require("../app/pipeline");
 const { subtitles } = require("../app/finish");
 const cfg = {
@@ -18,6 +25,11 @@ const cfg = {
 };
 const veoCfg = { ...cfg, videoProvider: "veo" };
 const selfCfg = { ...cfg, videoProvider: "selfHosted" };
+const zhipuCfg = {
+  ...cfg,
+  videoProvider: "zhipu",
+  zhipuModel: "cogvideox-flash",
+};
 const operation = "models/veo-3.1-generate-preview/operations/abc123";
 async function folder(t) {
   const dir = await fs.mkdtemp(path.join(os.tmpdir(), "providers 短剧 "));
@@ -246,4 +258,112 @@ test("subtitles and the merged video follow each scene's length", async (t) => {
     ]),
   );
   assert.ok(Math.abs(Number(info.format.duration) - 13) < 0.05);
+});
+
+test("Zhipu gets the first frame as Base64 with the key as a bearer token", async (t) => {
+  const dir = await folder(t);
+  const picture = path.join(dir, "frame.png");
+  await fs.writeFile(picture, Buffer.from("png-bytes"));
+  const calls = [];
+  const zhipu = new Zhipu(zhipuCfg, "z-key", async (url, init) => {
+    calls.push({ url, init });
+    return Response.json({ id: "task-1", task_status: "PROCESSING" });
+  });
+  assert.equal(await zhipu.submit({ prompt: "Walk" }, picture), "task-1");
+  assert.equal(calls.length, 1);
+  assert.equal(
+    calls[0].url,
+    "https://open.bigmodel.cn/api/paas/v4/videos/generations",
+  );
+  assert.equal(calls[0].init.headers.Authorization, "Bearer z-key");
+  assert.deepEqual(JSON.parse(calls[0].init.body), {
+    model: "cogvideox-flash",
+    prompt: "Walk",
+    image_url:
+      "data:image/png;base64," + Buffer.from("png-bytes").toString("base64"),
+  });
+});
+test("Zhipu polls the async result until the video is ready", async () => {
+  const replies = [
+    { task_status: "PROCESSING" },
+    {
+      task_status: "SUCCESS",
+      video_result: [{ url: "https://cdn.bigmodel.cn/v.mp4" }],
+    },
+  ];
+  const seen = [];
+  const zhipu = new Zhipu(
+    zhipuCfg,
+    "z-key",
+    async (url) => {
+      seen.push(url);
+      return Response.json(replies.shift());
+    },
+    async () => {},
+  );
+  assert.equal(
+    await zhipu.poll("task-1", () => {}),
+    "https://cdn.bigmodel.cn/v.mp4",
+  );
+  assert.equal(
+    seen[0],
+    "https://open.bigmodel.cn/api/paas/v4/async-result/task-1",
+  );
+});
+test("a failed or refused Zhipu task is definitive", async () => {
+  const failed = new Zhipu(zhipuCfg, "z-key", async () =>
+    Response.json({ task_status: "FAIL" }),
+  );
+  await assert.rejects(
+    () => failed.poll("task-1", () => {}),
+    (e) => e.taskStatus === "FAILED",
+  );
+  const refused = new Zhipu(zhipuCfg, "z-key", async () =>
+    Response.json(
+      { error: { code: "1211", message: "模型不存在" } },
+      { status: 400 },
+    ),
+  );
+  await assert.rejects(
+    () => refused.submit({ prompt: "Walk" }),
+    (e) => e.rejected && /1211: 模型不存在/.test(e.message),
+  );
+});
+test("Zhipu is free and can work from the prompt alone", () => {
+  const bare = { scenes: [{ prompt: "Walk" }], reserved: 0 };
+  assert.equal(validate(bare, { ...zhipuCfg, pricePerSecond: 0 }), 0);
+  assert.throws(
+    () => validate(bare, { ...zhipuCfg, zhipuModel: "gpt" }),
+    /Zhipu model/,
+  );
+});
+test("a Zhipu scene keeps its clip length and a lost response does not block it", async (t) => {
+  if (!(await ffmpeg(t))) return;
+  const dir = await folder(t);
+  const source = await clip(path.join(dir, "source.mp4"), 6);
+  const p = { scenes: [{ prompt: "Walk" }], reserved: 0 };
+  let attempts = 0;
+  const zhipu = {
+    submit: async (scene, file) => {
+      assert.equal(file, undefined);
+      if (++attempts === 1) throw new TypeError("fetch failed");
+      return "task-2";
+    },
+    poll: async () => "https://cdn.bigmodel.cn/v.mp4",
+  };
+  const options = {
+    video: zhipu,
+    persist: async () => {},
+    fetcher: async () => new Response(await fs.readFile(source)),
+  };
+  await assert.rejects(
+    () => produce(p, dir, zhipuCfg, options),
+    /fetch failed/,
+  );
+  assert.equal(p.scenes[0].uncertain, false);
+  await produce(p, dir, zhipuCfg, options);
+  assert.equal(p.scenes[0].provider, "zhipu");
+  assert.equal(p.scenes[0].model, "cogvideox-flash");
+  assert.equal(p.scenes[0].seconds, 6);
+  assert.equal(p.reserved, 0);
 });

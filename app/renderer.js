@@ -3,6 +3,7 @@ const fields = [
   "videoProvider",
   "veoModel",
   "selfHostedUrl",
+  "zhipuModel",
   "region",
   "model",
   "scriptSource",
@@ -196,7 +197,7 @@ async function saveSettings() {
   for (const f of secrets) $(f).value = "";
   showKeys(await window.studio.settings());
 }
-const secrets = ["key", "veoKey", "selfHostedKey"];
+const secrets = ["key", "veoKey", "zhipuKey", "selfHostedKey"];
 function showKeys(cfg) {
   const provider = $("videoProvider").value;
   const saved = provider === "wan" ? cfg.hasKey : cfg.keys?.[provider];
@@ -252,7 +253,7 @@ $("create").onclick = () =>
       scenes.some(
         (s) =>
           !s.prompt ||
-          ($("videoProvider").value !== "selfHosted" &&
+          (!["selfHosted", "zhipu"].includes($("videoProvider").value) &&
             !s.continuePrevious &&
             !s.image &&
             !s.localImage &&
@@ -310,10 +311,12 @@ function syncSources() {
   const provider = $("videoProvider").value;
   for (const el of document.querySelectorAll(".veo-only"))
     el.hidden = provider !== "veo";
+  for (const el of document.querySelectorAll(".zhipu-only"))
+    el.hidden = provider !== "zhipu";
   for (const el of document.querySelectorAll(".selfhosted-only"))
     el.hidden = provider !== "selfHosted";
   for (const el of document.querySelectorAll(".paid-only"))
-    el.hidden = provider === "selfHosted";
+    el.hidden = provider === "selfHosted" || provider === "zhipu";
 }
 $("videoProvider").onchange = syncSources;
 $("scriptSource").onchange = syncSources;

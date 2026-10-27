@@ -14,6 +14,7 @@ const {
   Wan,
   Veo,
   SelfHosted,
+  Zhipu,
   validate,
   merge,
   run,
@@ -54,11 +55,13 @@ const defaults = {
   imageModel: "wan2.2-t2i-flash",
   veoModel: "veo-3.1-generate-preview",
   selfHostedUrl: "http://127.0.0.1:8081",
+  zhipuModel: "cogvideox-flash",
 };
 // Each service keeps its own encrypted key.
 const SECRETS = {
   wan: { file: "key.bin", field: "key", name: "阿里云 API Key" },
   veo: { file: "veo-key.bin", field: "veoKey", name: "Google Gemini API Key" },
+  zhipu: { file: "zhipu-key.bin", field: "zhipuKey", name: "智谱 API Key" },
   selfHosted: {
     file: "selfhosted-key.bin",
     field: "selfHostedKey",
@@ -68,6 +71,7 @@ const SECRETS = {
 const PROVIDERS = {
   wan: "阿里云 Wan",
   veo: "Google Veo",
+  zhipu: "智谱 CogVideoX",
   selfHosted: "自建服务器",
 };
 const root = () => app.getPath("userData");
@@ -284,6 +288,10 @@ app.whenReady().then(async () => {
       report.push(
         `Google Veo：${(await hasKey("veo")) ? "API Key 已保存" : "还没有保存 Gemini API Key，请在上面填写后点保存设置"} · 模型 ${cfg.veoModel}`,
       );
+    if (provider === "zhipu")
+      report.push(
+        `智谱：${(await hasKey("zhipu")) ? "API Key 已保存" : "还没有保存智谱 API Key，请在上面填写后点保存设置"} · 模型 ${cfg.zhipuModel}`,
+      );
     if (provider === "selfHosted")
       report.push(
         await Promise.resolve()
@@ -492,6 +500,7 @@ app.whenReady().then(async () => {
       const pictures = p.scenes.filter(
         (s, i) =>
           provider !== "selfHosted" &&
+          s.imagePrompt &&
           !s.taskId &&
           !s.clip &&
           !s.localImage &&
@@ -521,6 +530,7 @@ app.whenReady().then(async () => {
           ? await readKey(provider, provider === "selfHosted")
           : wanKey;
       const count = p.scenes.filter((s) => !s.taskId && !s.clip).length;
+      const free = provider === "selfHosted" || provider === "zhipu";
       if (count) {
         const pictureNote = cloudPictures
           ? `另外会用阿里云画 ${cloudPictures} 张图，按张计费（失败不收费，价格见百炼控制台）。`
@@ -529,9 +539,7 @@ app.whenReady().then(async () => {
           type: "warning",
           buttons: [
             "取消",
-            provider === "selfHosted" && !cloudPictures
-              ? "开始生成"
-              : "批准付费生成",
+            free && !cloudPictures ? "开始生成" : "批准付费生成",
           ],
           defaultId: 0,
           cancelId: 0,
@@ -539,11 +547,15 @@ app.whenReady().then(async () => {
           message:
             provider === "selfHosted"
               ? `在自建服务器上生成 ${count} 个镜头？`
-              : `提交 ${count} 个付费 ${PROVIDERS[provider]} 视频任务？`,
+              : provider === "zhipu"
+                ? `用智谱 CogVideoX 免费生成 ${count} 个镜头？`
+                : `提交 ${count} 个付费 ${PROVIDERS[provider]} 视频任务？`,
           detail:
             provider === "selfHosted"
               ? `视频在你自己的服务器上生成，本应用不计算服务器（GPU）费用。${pictureNote}`
-              : `预计新增视频费用：${estimate.toFixed(2)}（每个镜头 ${provider === "veo" ? 8 : 5} 秒）。本项目已预留：${Number(p.reserved || 0).toFixed(2)}。预算：${cfg.budget}。${pictureNote}${provider === "veo" ? "镜头的第一帧图片会发送给 Google。" : "图片会上传到阿里云临时存储（有效期 48 小时）。"}所有金额使用你填写的单价币种；估算不代表实际账单，请核对服务商当前报价。`,
+              : provider === "zhipu"
+                ? `${cfg.zhipuModel} 目前免费，以智谱开放平台的公告为准；换成收费的智谱模型时，费用不在本应用的预算里。${pictureNote}提示词和镜头的第一帧图片会发送给智谱。`
+                : `预计新增视频费用：${estimate.toFixed(2)}（每个镜头 ${provider === "veo" ? 8 : 5} 秒）。本项目已预留：${Number(p.reserved || 0).toFixed(2)}。预算：${cfg.budget}。${pictureNote}${provider === "veo" ? "镜头的第一帧图片会发送给 Google。" : "图片会上传到阿里云临时存储（有效期 48 小时）。"}所有金额使用你填写的单价币种；估算不代表实际账单，请核对服务商当前报价。`,
         });
         if (result.response !== 1) return { canceled: true };
       }
@@ -553,9 +565,11 @@ app.whenReady().then(async () => {
         video:
           provider === "veo"
             ? new Veo(cfg, videoKey)
-            : provider === "selfHosted"
-              ? new SelfHosted(cfg, videoKey)
-              : wan,
+            : provider === "zhipu"
+              ? new Zhipu(cfg, videoKey)
+              : provider === "selfHosted"
+                ? new SelfHosted(cfg, videoKey)
+                : wan,
         comfy: graph ? new Comfy(cfg) : null,
         workflow: graph,
         persist: () => save(file, p),

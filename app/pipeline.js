@@ -2,6 +2,7 @@ const fs = require("node:fs/promises");
 const path = require("node:path");
 const { download, probe, lastFrame, CLIP_SECONDS } = require("./engine");
 const DAY = 24 * 60 * 60 * 1000;
+const NAMES = { wan: "阿里云 Wan", veo: "Google Veo", zhipu: "智谱 CogVideoX" };
 const exists = (file) =>
   fs.access(file).then(
     () => true,
@@ -70,7 +71,7 @@ async function produce(
           path.join(folder, `frame-${n}.png`),
           cfg,
         );
-      } else if (!s.localImage && !s.image) {
+      } else if (!s.localImage && !s.image && s.imagePrompt) {
         const target = path.join(folder, `image-${i}.png`);
         if (comfy)
           for (let attempt = 0; ; attempt++) {
@@ -117,8 +118,8 @@ async function produce(
         await persist();
       }
       let remoteImage = s.image;
-      if (provider === "veo" && !source && s.image) {
-        // Veo takes the picture itself rather than a link, so fetch it first.
+      if (provider !== "wan" && !source && s.image) {
+        // Veo and Zhipu take the picture itself rather than a link, so fetch it first.
         source = path.join(folder, `image-${i}.png`);
         await download(s.image, source, fetcher);
       }
@@ -127,18 +128,20 @@ async function produce(
         remoteImage = await wan.upload(source);
       }
       const reserved = Number(p.reserved || 0);
+      // A free provider cannot charge twice, so a lost response need not block the scene.
+      const paid = Boolean(CLIP_SECONDS[provider]);
       s.uncertain = true;
       p.reserved =
-        reserved + CLIP_SECONDS[provider] * Number(cfg.pricePerSecond);
+        reserved + (CLIP_SECONDS[provider] || 0) * Number(cfg.pricePerSecond);
       await persist();
       emit(`正在提交镜头 ${n}…`);
       try {
         s.taskId =
-          provider === "veo"
+          provider !== "wan"
             ? await video.submit(s, source)
             : await video.submit({ ...s, image: remoteImage });
       } catch (e) {
-        if (e.rejected) {
+        if (e.rejected || !paid) {
           // The provider refused the request, so no task exists: release the reservation.
           s.uncertain = false;
           p.reserved = reserved;
@@ -148,7 +151,8 @@ async function produce(
       }
       s.provider = provider;
       s.region = cfg.region;
-      s.model = provider === "veo" ? cfg.veoModel : cfg.model;
+      s.model =
+        { veo: cfg.veoModel, zhipu: cfg.zhipuModel }[provider] || cfg.model;
       s.submittedAt = new Date(now()).toISOString();
       s.uncertain = false;
       await persist();
@@ -156,7 +160,7 @@ async function produce(
     const used = s.provider || "wan";
     if (used !== provider)
       throw Error(
-        `镜头 ${n} 的任务提交给了 ${used === "veo" ? "Google Veo" : "阿里云 Wan"}，请把设置里的“视频由谁生成”切换回去后再恢复`,
+        `镜头 ${n} 的任务提交给了 ${NAMES[used]}，请把设置里的“视频由谁生成”切换回去后再恢复`,
       );
     if (used === "wan" && s.region !== cfg.region)
       throw Error(
@@ -198,15 +202,17 @@ async function produce(
       file = path.join(folder, clip);
     if (used === "veo") await video.download(url, file);
     else await download(url, file, fetcher);
+    let duration;
     try {
-      await probe(file, cfg);
+      duration = await probe(file, cfg);
     } catch (e) {
       // Keep the task ID so the next run downloads it again without a new job.
       await fs.rm(file, { force: true });
       throw e;
     }
     s.clip = clip;
-    s.seconds = CLIP_SECONDS[used];
+    s.seconds =
+      CLIP_SECONDS[used] || Math.min(60, Math.max(1, Math.round(duration)));
     await persist();
   }
 }

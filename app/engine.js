@@ -154,7 +154,7 @@ class Wan {
   }
 }
 
-// Seconds of video each provider returns per scene; a self-hosted clip keeps its own length.
+// Seconds of video each paid provider returns per scene; other clips keep their own length.
 const CLIP_SECONDS = { wan: 5, veo: 8 };
 const sceneSeconds = (scene) => Number(scene.seconds) || 5;
 // Google Veo through the Gemini API: a long-running operation that is polled like a Wan task.
@@ -260,6 +260,90 @@ class Veo {
     await streamToFile(response, destination);
   }
 }
+// Zhipu CogVideoX-Flash on open.bigmodel.cn: free, asynchronous like Wan.
+class Zhipu {
+  constructor(settings, key, fetcher = fetch, pause = delay) {
+    this.settings = settings;
+    this.key = key;
+    this.fetch = fetcher;
+    this.pause = pause;
+  }
+  async request(route, body) {
+    const response = await this.fetch(
+      "https://open.bigmodel.cn/api/paas/v4" + route,
+      {
+        method: body ? "POST" : "GET",
+        headers: {
+          Authorization: `Bearer ${this.key}`,
+          "Content-Type": "application/json",
+        },
+        body: body ? JSON.stringify(body) : undefined,
+        signal: AbortSignal.timeout(60000),
+      },
+    );
+    if (!response.ok) {
+      let detail = "";
+      try {
+        const data = await response.json();
+        detail = [data.error?.code, data.error?.message]
+          .filter(Boolean)
+          .join(": ");
+      } catch {}
+      const error = new Error(
+        `智谱 HTTP ${response.status}${detail ? ` (${detail.slice(0, 300)})` : ""}。请检查 API Key、模型名称和账号额度。`,
+      );
+      error.retryable = response.status === 429 || response.status >= 500;
+      error.rejected = response.status >= 400 && response.status < 500;
+      throw error;
+    }
+    return response.json();
+  }
+  // The first frame goes inline as Base64, so continuous shots keep the same characters.
+  async submit(scene, imageFile) {
+    const body = { model: this.settings.zhipuModel, prompt: scene.prompt };
+    if (imageFile) {
+      const content = await fs.readFile(imageFile);
+      if (content.length > 5 * 1024 * 1024) throw Error("Image exceeds 5 MB");
+      body.image_url = `data:${/\.jpe?g$/i.test(imageFile) ? "image/jpeg" : "image/png"};base64,${content.toString("base64")}`;
+    }
+    const data = await this.request("/videos/generations", body);
+    if (!data.id) throw new Error("智谱没有返回任务 ID");
+    return data.id;
+  }
+  async poll(id, progress) {
+    for (let i = 0; i < 360; i++) {
+      let data;
+      for (let attempt = 0; attempt < 4; attempt++) {
+        try {
+          data = await this.request("/async-result/" + encodeURIComponent(id));
+          break;
+        } catch (error) {
+          if (!error.retryable || attempt === 3) throw error;
+          await this.pause(1000 * 2 ** attempt);
+        }
+      }
+      progress(data.task_status || "UNKNOWN");
+      if (data.task_status === "SUCCESS") {
+        const url = data.video_result?.find((v) => v.url)?.url;
+        if (url) return url;
+        const error = new Error("智谱没有返回视频地址");
+        error.taskStatus = "FAILED";
+        throw error;
+      }
+      if (data.task_status === "FAIL") {
+        const error = new Error(
+          "Task FAILED: 智谱生成失败，可能是提示词或图片没有通过审核",
+        );
+        error.taskStatus = "FAILED";
+        throw error;
+      }
+      await this.pause(10000);
+    }
+    throw new Error(
+      "Polling timed out. Resume this task later; do not resubmit.",
+    );
+  }
+}
 // A GPU server you run yourself (e.g. Wan2.1 or LTX-Video): POST /generate returns the MP4.
 class SelfHosted {
   constructor(settings, key, fetcher = fetch) {
@@ -290,6 +374,13 @@ function validate(project, settings) {
     throw new Error("Invalid Wan model");
   if (provider === "veo" && !/^veo[\w.-]+$/.test(settings.veoModel || ""))
     throw new Error("Invalid Veo model");
+  if (
+    provider === "zhipu" &&
+    !/^cogvideox[\w.-]*$/i.test(settings.zhipuModel || "")
+  )
+    throw new Error("Invalid Zhipu model");
+  // Free and self-hosted providers can also work from the prompt alone.
+  const textOnly = provider === "selfHosted" || provider === "zhipu";
   if (provider === "selfHosted") {
     let url;
     try {
@@ -297,7 +388,8 @@ function validate(project, settings) {
     } catch {}
     if (!url || !["http:", "https:"].includes(url.protocol) || url.username)
       throw new Error("Invalid self-hosted server address");
-  } else if (!CLIP_SECONDS[provider]) throw new Error("Invalid video provider");
+  } else if (!CLIP_SECONDS[provider] && provider !== "zhipu")
+    throw new Error("Invalid video provider");
   if (
     !Array.isArray(project.scenes) ||
     !project.scenes.length ||
@@ -311,9 +403,8 @@ function validate(project, settings) {
       scene.prompt.length > 2000
     )
       throw new Error("Each scene needs a prompt of at most 2000 characters");
-    // The self-hosted server works from the prompt alone.
     if (
-      provider === "selfHosted" ||
+      textOnly ||
       scene.localImage ||
       (i > 0 && scene.continuePrevious) ||
       (!scene.image && scene.imagePrompt)
@@ -330,7 +421,7 @@ function validate(project, settings) {
   }
   const pending = project.scenes.filter((s) => !s.taskId && !s.clip).length;
   // Resuming or re-exporting submitted scenes spends nothing new; your own server is not billed here.
-  if (!pending || provider === "selfHosted") return 0;
+  if (!pending || textOnly) return 0;
   const rate = Number(settings.pricePerSecond),
     budget = Number(settings.budget);
   if (
@@ -487,6 +578,7 @@ module.exports = {
   Wan,
   Veo,
   SelfHosted,
+  Zhipu,
   CLIP_SECONDS,
   sceneSeconds,
   validate,
