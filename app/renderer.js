@@ -100,7 +100,7 @@ function scene(data = {}) {
   }
   field(
     "textarea",
-    "ComfyUI 图片提示词（没有图片时自动生图）",
+    "图片提示词（没有图片时，由阿里云或 ComfyUI 按它画图）",
     data.imagePrompt,
     "imagePrompt",
   ).parentElement.classList.add("visual");
