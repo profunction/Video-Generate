@@ -125,7 +125,10 @@ class Wan {
   }
 }
 function validate(project, settings) {
-  if (!ENDPOINTS[settings.region] || !/^wan[\w.-]+$/.test(settings.model))
+  if (
+    !settings.localVideo &&
+    (!ENDPOINTS[settings.region] || !/^wan[\w.-]+$/.test(settings.model))
+  )
     throw new Error("Invalid Wan region or model");
   if (
     !Array.isArray(project.scenes) ||
@@ -150,6 +153,7 @@ function validate(project, settings) {
     if (url.protocol !== "https:" || url.username || url.password)
       throw new Error("Use public HTTPS image URLs");
   }
+  if (settings.localVideo) return 0;
   const rate = Number(settings.pricePerSecond),
     budget = Number(settings.budget);
   if (

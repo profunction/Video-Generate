@@ -29,6 +29,15 @@ test("budget includes reserved spend and excludes previously submitted jobs", ()
     /HTTPS/,
   );
 });
+test("local video mode skips the Wan region/model and budget checks", () => {
+  assert.equal(
+    validate(
+      { scenes: [scene], reserved: 0 },
+      { localVideo: true, region: "", model: "" },
+    ),
+    0,
+  );
+});
 test("paid submission uses correct async payload and never retries", async () => {
   let calls = 0;
   const wan = new Wan(cfg, "secret", async (url, options) => {

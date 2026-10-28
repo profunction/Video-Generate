@@ -7,6 +7,7 @@ const {
   localBase,
   storyboard,
   prepareWorkflow,
+  prepareVideoWorkflow,
   Comfy,
 } = require("../app/local-ai");
 const { Wan, validate, download, merge, run } = require("../app/engine");
@@ -41,6 +42,38 @@ test("workflow replacement preserves links, does not mutate source, rejects UI f
   assert.throws(
     () => prepareWorkflow({ 1: { class_type: "SaveImage", inputs: {} } }, "x"),
     /PROMPT/,
+  );
+});
+test("video workflow replacement requires prompt, image and a video save node", () => {
+  const videoWorkflow = {
+    1: { class_type: "LoadImage", inputs: { image: "{{IMAGE}}" } },
+    2: { class_type: "CLIPTextEncode", inputs: { text: "{{PROMPT}}" } },
+    3: { class_type: "VHS_VideoCombine", inputs: { frame_rate: 24 } },
+  };
+  const copy = prepareVideoWorkflow(videoWorkflow, "a hero runs", "scene.png");
+  assert.equal(copy["1"].inputs.image, "scene.png");
+  assert.equal(copy["2"].inputs.text, "a hero runs");
+  assert.equal(videoWorkflow["1"].inputs.image, "{{IMAGE}}");
+  assert.throws(
+    () =>
+      prepareVideoWorkflow(
+        { 1: { class_type: "CLIPTextEncode", inputs: { text: "{{PROMPT}}" } } },
+        "x",
+        "scene.png",
+      ),
+    /IMAGE/,
+  );
+  assert.throws(
+    () =>
+      prepareVideoWorkflow(
+        {
+          1: { class_type: "LoadImage", inputs: { image: "{{IMAGE}}" } },
+          2: { class_type: "CLIPTextEncode", inputs: { text: "{{PROMPT}}" } },
+        },
+        "x",
+        "scene.png",
+      ),
+    /VHS_VideoCombine|SaveVideo/,
   );
 });
 test("story generation validates returned scene count and structured fields", async () => {
@@ -224,6 +257,64 @@ test("mock connected flow: story → ComfyUI → local image upload → Wan → 
   }
 });
 
+test("local ComfyUI image-to-video: upload image, submit workflow, poll and download the clip", async () => {
+  const videoWorkflow = {
+    1: { class_type: "LoadImage", inputs: { image: "{{IMAGE}}" } },
+    2: { class_type: "CLIPTextEncode", inputs: { text: "{{PROMPT}}" } },
+    3: { class_type: "VHS_VideoCombine", inputs: { frame_rate: 24 } },
+  };
+  const folder = await fs.mkdtemp(path.join(os.tmpdir(), "local video "));
+  try {
+    const source = path.join(folder, "scene.png");
+    await fs.writeFile(source, "fake png");
+    let polls = 0;
+    const fetcher = async (url, options = {}) => {
+      const u = new URL(url);
+      if (u.pathname === "/upload/image") {
+        assert.ok(options.body.get("image"));
+        return { ok: true, json: async () => ({ name: "scene.png" }) };
+      }
+      if (u.pathname === "/prompt") {
+        const body = JSON.parse(options.body);
+        assert.equal(body.prompt["1"].inputs.image, "scene.png");
+        assert.equal(body.prompt["2"].inputs.text, "A clockmaker runs");
+        return { ok: true, json: async () => ({ prompt_id: "video-job" }) };
+      }
+      if (u.pathname === "/history/video-job") {
+        polls++;
+        return {
+          ok: true,
+          json: async () => ({
+            "video-job":
+              polls === 1
+                ? {}
+                : {
+                    outputs: {
+                      3: {
+                        gifs: [
+                          { filename: "clip.mp4", type: "output", subfolder: "" },
+                        ],
+                      },
+                    },
+                  },
+          }),
+        };
+      }
+      if (u.pathname === "/view")
+        return { ok: true, arrayBuffer: async () => Buffer.from("mock MP4") };
+      throw Error("Unexpected request " + url);
+    };
+    const comfy = new Comfy(cfg, fetcher, async () => {});
+    const uploaded = await comfy.uploadImage(source);
+    const id = await comfy.submitVideo(videoWorkflow, "A clockmaker runs", uploaded);
+    const clip = path.join(folder, "clip.mp4");
+    await comfy.video(id, clip);
+    assert.equal(await fs.readFile(clip, "utf8"), "mock MP4");
+    assert.equal(polls, 2);
+  } finally {
+    await fs.rm(folder, { recursive: true, force: true });
+  }
+});
 test("Windows installed SAPI voice renders audio into the exported drama", async (t) => {
   if (process.platform !== "win32") {
     t.skip("Requires Windows SAPI");

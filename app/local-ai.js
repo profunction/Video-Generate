@@ -103,6 +103,39 @@ function prepareWorkflow(template, prompt) {
     throw Error("Workflow must include SaveImage");
   return graph;
 }
+const VIDEO_SAVE_NODES = ["VHS_VideoCombine", "SaveVideo"];
+function prepareVideoWorkflow(template, prompt, image) {
+  const graph = JSON.parse(JSON.stringify(template));
+  let promptReplaced = false,
+    imageReplaced = false;
+  for (const node of Object.values(graph)) {
+    if (
+      !node ||
+      typeof node.class_type !== "string" ||
+      typeof node.inputs !== "object"
+    )
+      throw Error("Import ComfyUI API-format workflow, not UI workflow");
+    for (const [k, v] of Object.entries(node.inputs)) {
+      if (typeof v === "string" && v.includes("{{PROMPT}}")) {
+        node.inputs[k] = v.replaceAll("{{PROMPT}}", prompt);
+        promptReplaced = true;
+      }
+      if (typeof v === "string" && v.includes("{{IMAGE}}")) {
+        node.inputs[k] = v.replaceAll("{{IMAGE}}", image);
+        imageReplaced = true;
+      }
+      if (["seed", "noise_seed"].includes(k) && typeof v === "number")
+        node.inputs[k] = crypto.randomInt(0, 2147483647);
+    }
+  }
+  if (!promptReplaced)
+    throw Error("Workflow must contain {{PROMPT}} in the positive prompt text");
+  if (!imageReplaced)
+    throw Error("Workflow must contain {{IMAGE}} in a LoadImage node");
+  if (!Object.values(graph).some((n) => VIDEO_SAVE_NODES.includes(n.class_type)))
+    throw Error("Workflow must include VHS_VideoCombine or SaveVideo");
+  return graph;
+}
 class Comfy {
   constructor(
     cfg,
@@ -129,6 +162,71 @@ class Comfy {
     if (!out.prompt_id)
       throw Error("ComfyUI rejected workflow; check models and nodes");
     return out.prompt_id;
+  }
+  async uploadImage(file) {
+    const content = await fs.readFile(file);
+    if (content.length > 20 * 1024 * 1024) throw Error("Image exceeds 20 MB");
+    const form = new FormData();
+    form.append("image", new Blob([content]), path.basename(file));
+    form.append("overwrite", "true");
+    const out = await json(
+      this.base + "/upload/image",
+      { method: "POST", body: form },
+      this.fetch,
+    );
+    if (!out.name) throw Error("ComfyUI image upload failed");
+    return out.subfolder ? out.subfolder + "/" + out.name : out.name;
+  }
+  async submitVideo(template, prompt, image) {
+    const out = await json(
+      this.base + "/prompt",
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          prompt: prepareVideoWorkflow(template, prompt, image),
+          client_id: crypto.randomUUID(),
+        }),
+      },
+      this.fetch,
+    );
+    if (!out.prompt_id)
+      throw Error("ComfyUI rejected workflow; check models and nodes");
+    return out.prompt_id;
+  }
+  async video(id, target) {
+    for (let i = 0; i < 720; i++) {
+      const result = await json(
+        this.base + "/history/" + encodeURIComponent(id),
+        {},
+        this.fetch,
+      );
+      const job = result[id];
+      if (job?.status?.status_str === "error")
+        throw Error("ComfyUI generation failed; check its console");
+      if (job?.outputs) {
+        for (const output of Object.values(job.outputs))
+          for (const video of output.gifs || []) {
+            if (video.type !== "output") continue;
+            const query = new URLSearchParams({
+              filename: video.filename,
+              subfolder: video.subfolder || "",
+              type: "output",
+            });
+            const r = await this.fetch(this.base + "/view?" + query, {
+              signal: AbortSignal.timeout(300000),
+            });
+            if (!r.ok) throw Error("Cannot download ComfyUI video");
+            const data = Buffer.from(await r.arrayBuffer());
+            if (data.length > 200 * 1024 * 1024)
+              throw Error("Video exceeds 200 MB");
+            await fs.writeFile(target, data);
+            return target;
+          }
+      }
+      await this.pause(5000);
+    }
+    throw Error("ComfyUI timed out; resume project to query existing job");
   }
   async image(id, target) {
     for (let i = 0; i < 720; i++) {
@@ -188,6 +286,7 @@ module.exports = {
   localBase,
   storyboard,
   prepareWorkflow,
+  prepareVideoWorkflow,
   Comfy,
   checkServices,
 };

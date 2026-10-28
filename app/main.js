@@ -16,6 +16,7 @@ const {
   Comfy,
   checkServices,
   prepareWorkflow,
+  prepareVideoWorkflow,
 } = require("./local-ai");
 const { finish } = require("./finish");
 let win,
@@ -30,6 +31,7 @@ const defaults = {
   ollamaUrl: "http://127.0.0.1:11434",
   ollamaModel: "qwen2.5:7b",
   comfyUrl: "http://127.0.0.1:8188",
+  localVideo: false,
   narration: false,
   voice: "",
 };
@@ -178,6 +180,18 @@ app.whenReady().then(async () => {
     await save(path.join(root(), "workflow.json"), graph);
     return true;
   });
+  ipcMain.handle("videoWorkflow:import", async () => {
+    if (busy) throw Error("Generation is running");
+    const r = await dialog.showOpenDialog(win, {
+      properties: ["openFile"],
+      filters: [{ name: "ComfyUI API workflow", extensions: ["json"] }],
+    });
+    if (r.canceled) return false;
+    const graph = JSON.parse(await fs.readFile(r.filePaths[0], "utf8"));
+    prepareVideoWorkflow(graph, "test", "test.png");
+    await save(path.join(root(), "video-workflow.json"), graph);
+    return true;
+  });
   ipcMain.handle("project:update", async (_, id, scenes) => {
     if (busy) throw Error("Generation is running");
     const file = projectPath(id),
@@ -245,14 +259,21 @@ app.whenReady().then(async () => {
       if (needsComfy && !workflow)
         throw Error("Import a ComfyUI API workflow first, or provide images");
       if (workflow) prepareWorkflow(workflow, "preflight");
-      const needsCloud = p.scenes.some((s) => !s.clip);
+      const videoWorkflow = cfg.localVideo
+        ? await read(path.join(root(), "video-workflow.json"), null)
+        : null;
+      if (cfg.localVideo && !videoWorkflow)
+        throw Error("Import a ComfyUI video workflow first");
+      if (videoWorkflow)
+        prepareVideoWorkflow(videoWorkflow, "preflight", "preflight.png");
+      const needsCloud = !cfg.localVideo && p.scenes.some((s) => !s.clip);
       const key = needsCloud
         ? safeStorage.decryptString(
             await fs.readFile(path.join(root(), "key.bin")),
           )
         : "";
       const count = p.scenes.filter((s) => !s.taskId && !s.clip).length;
-      if (count) {
+      if (count && !cfg.localVideo) {
         const result = await dialog.showMessageBox(win, {
           type: "warning",
           buttons: ["Cancel", "Approve paid generation"],
@@ -263,7 +284,7 @@ app.whenReady().then(async () => {
         });
         if (result.response !== 1) return { canceled: true };
       }
-      const wan = new Wan(cfg, key),
+      const wan = cfg.localVideo ? null : new Wan(cfg, key),
         folder = path.dirname(file);
       for (let i = 0; i < p.scenes.length; i++) {
         const s = p.scenes[i];
@@ -275,19 +296,48 @@ app.whenReady().then(async () => {
           throw Error(
             `Scene ${i + 1} has an uncertain submission. Check Alibaba console before creating a replacement project.`,
           );
-        if (!s.taskId) {
-          if (!s.localImage && !s.image) {
-            const comfy = new Comfy(cfg);
-            if (!s.comfyId) {
-              emit(`ComfyUI: generating scene ${i + 1}…`);
-              s.comfyId = await comfy.submit(workflow, s.imagePrompt);
-              await save(file, p);
-            }
-            const target = path.join(folder, `image-${i}.png`);
-            await comfy.image(s.comfyId, target);
-            s.localImage = target;
+        if (!s.localImage && !s.image) {
+          const comfy = new Comfy(cfg);
+          if (!s.comfyId) {
+            emit(`ComfyUI: generating scene ${i + 1} image…`);
+            s.comfyId = await comfy.submit(workflow, s.imagePrompt);
             await save(file, p);
           }
+          const target = path.join(folder, `image-${i}.png`);
+          await comfy.image(s.comfyId, target);
+          s.localImage = target;
+          await save(file, p);
+        }
+        if (cfg.localVideo) {
+          const comfy = new Comfy(cfg);
+          let source = s.localImage;
+          if (!source) {
+            source = path.join(folder, `source-${i}.png`);
+            emit(`Downloading scene ${i + 1} image…`);
+            await download(s.image, source);
+          }
+          if (!s.comfyVideoId) {
+            emit(`ComfyUI: uploading scene ${i + 1} image…`);
+            const uploaded = await comfy.uploadImage(source);
+            emit(`ComfyUI: generating scene ${i + 1} video…`);
+            s.comfyVideoId = await comfy.submitVideo(
+              videoWorkflow,
+              s.prompt,
+              uploaded,
+            );
+            await save(file, p);
+          }
+          s.clip = `clip-${i + 1}.mp4`;
+          try {
+            await comfy.video(s.comfyVideoId, path.join(folder, s.clip));
+          } catch (e) {
+            delete s.clip;
+            throw e;
+          }
+          await save(file, p);
+          continue;
+        }
+        if (!s.taskId) {
           let remoteImage = s.image;
           if (s.localImage) {
             emit(`Uploading scene ${i + 1} image…`);

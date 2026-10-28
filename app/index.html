@@ -70,6 +70,13 @@
               id="comfyUrl"
               value="http://127.0.0.1:8188" /></label
           ><label
+            >视频生成方式<select id="localVideo">
+              <option value="false">云端 Wan（按量付费）</option>
+              <option value="true">
+                本地 ComfyUI（需独立显卡，无云端视频费用）
+              </option>
+            </select></label
+          ><label
             >Windows 配音<select id="narration">
               <option value="false">关闭（仍导出字幕）</option>
               <option value="true">开启系统语音</option>
@@ -85,6 +92,9 @@
         ><button class="secondary" id="workflow">
           导入 ComfyUI API 工作流
         </button>
+        <button class="secondary" id="videoWorkflow">
+          导入 ComfyUI 视频工作流
+        </button>
         <details>
           <summary>首次配置本地 AI</summary>
           <p>
@@ -93,6 +103,16 @@
             JSON，把正向提示词替换为 {{PROMPT}}，保留负向提示词，确保包含
             SaveImage 节点，然后在此导入。无需 ComfyUI
             时，直接选择本地图片或填写图片网址。应用连接这些服务，不包含模型和服务安装程序。
+          </p>
+          <p>
+            需要批量生产、不想付云端 Wan 视频费用时，把“视频生成方式”切换为“本地
+            ComfyUI”，并在 ComfyUI 中部署支持图生视频的 Wan 模型（如
+            Wan2.1/2.2 i2v，显存要求视具体模型而定）。导出该工作流的 API 格式
+            JSON：LoadImage 节点的图片名替换为 {{IMAGE}}，正向提示词替换为
+            {{PROMPT}}，并包含 VHS_VideoCombine 或 SaveVideo
+            节点输出视频，再在此导入。本地生成不受预算检查和付费确认限制，但会占用本机或已连接
+            GPU
+            的算力与显存；需要自行承担租用服务器等费用，应用不会计算或限制这部分开销。
           </p>
         </details>
       </section>

@@ -9,6 +9,7 @@ const fields = [
   "ollamaUrl",
   "ollamaModel",
   "comfyUrl",
+  "localVideo",
   "narration",
   "voice",
 ];
@@ -150,6 +151,7 @@ $("save").onclick = () =>
     const value = { key: $("key").value };
     for (const f of fields) value[f] = $(f).value;
     value.narration = value.narration === "true";
+    value.localVideo = value.localVideo === "true";
     await window.studio.saveSettings(value);
     $("key").value = "";
     $("keyStatus").textContent = (await window.studio.settings()).hasKey
@@ -165,6 +167,11 @@ $("checkLocal").onclick = () =>
 $("workflow").onclick = () =>
   action(async () => {
     if (await window.studio.importWorkflow()) status("API 工作流已导入");
+  });
+$("videoWorkflow").onclick = () =>
+  action(async () => {
+    if (await window.studio.importVideoWorkflow())
+      status("视频工作流已导入");
   });
 $("add").onclick = () => scene();
 $("newProject").onclick = () => {
