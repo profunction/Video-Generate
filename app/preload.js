@@ -3,6 +3,7 @@ contextBridge.exposeInMainWorld("studio", {
   generateStory: (idea, count) =>
     ipcRenderer.invoke("story:generate", idea, count),
   checkLocal: () => ipcRenderer.invoke("local:check"),
+  openComfy: () => ipcRenderer.invoke("comfy:open"),
   importWorkflow: () => ipcRenderer.invoke("workflow:import"),
   importVideoWorkflow: () => ipcRenderer.invoke("videoWorkflow:import"),
   pickImage: () => ipcRenderer.invoke("image:pick"),

@@ -17,6 +17,7 @@ const {
   checkServices,
   prepareWorkflow,
   prepareVideoWorkflow,
+  localBase,
 } = require("./local-ai");
 const { finish } = require("./finish");
 let win,
@@ -151,6 +152,10 @@ app.whenReady().then(async () => {
     return p;
   });
   ipcMain.handle("local:check", async () => checkServices(await settings()));
+  ipcMain.handle("comfy:open", async () => {
+    const cfg = await settings();
+    await shell.openExternal(localBase(cfg.comfyUrl) + "/");
+  });
   ipcMain.handle("story:generate", async (_, idea, count) => {
     if (busy) throw Error("Another operation is running");
     busy = true;

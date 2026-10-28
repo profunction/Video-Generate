@@ -164,6 +164,11 @@ $("checkLocal").onclick = () =>
     status("正在检测已保存的本地服务地址…");
     status(await window.studio.checkLocal());
   });
+$("openComfy").onclick = () =>
+  action(async () => {
+    await window.studio.openComfy();
+    status("已在浏览器中打开 ComfyUI 界面");
+  });
 $("workflow").onclick = () =>
   action(async () => {
     if (await window.studio.importWorkflow()) status("API 工作流已导入");
