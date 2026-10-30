@@ -124,12 +124,141 @@ class Wan {
     );
   }
 }
+const CLIP_SECONDS = { wan: 5, veo: 8 };
+class Veo {
+  constructor(settings, key, fetcher = fetch, pause = delay) {
+    this.settings = settings;
+    this.key = key;
+    this.fetch = fetcher;
+    this.pause = pause;
+  }
+  async request(path, method, body) {
+    const response = await this.fetch(
+      "https://generativelanguage.googleapis.com/v1beta/" + path,
+      {
+        method,
+        headers: {
+          "x-goog-api-key": this.key,
+          "Content-Type": "application/json",
+        },
+        body: body ? JSON.stringify(body) : undefined,
+        signal: AbortSignal.timeout(60000),
+      },
+    );
+    if (!response.ok) {
+      const error = new Error(
+        `Veo HTTP ${response.status}. Check model, quota and credentials.`,
+      );
+      error.retryable = response.status === 429 || response.status >= 500;
+      throw error;
+    }
+    return response.json();
+  }
+  async submit(scene) {
+    // Never retry POST automatically: a lost response may still have created a paid job.
+    const data = await this.request(
+      `models/${this.settings.veoModel}:predictLongRunning`,
+      "POST",
+      {
+        instances: [{ prompt: scene.prompt }],
+        parameters: { aspectRatio: "16:9" },
+      },
+    );
+    if (!/^models\/[\w.-]+\/operations\/[\w-]+$/.test(data.name || ""))
+      throw new Error(
+        "Veo returned no valid operation name. Check provider console before retrying.",
+      );
+    return data.name;
+  }
+  async poll(id, progress) {
+    for (let i = 0; i < 360; i++) {
+      let data;
+      for (let attempt = 0; attempt < 4; attempt++) {
+        try {
+          data = await this.request(id, "GET");
+          break;
+        } catch (error) {
+          if (!error.retryable || attempt === 3) throw error;
+          await this.pause(1000 * 2 ** attempt);
+        }
+      }
+      progress(data.done ? "DONE" : "PENDING");
+      if (data.done) {
+        if (data.error)
+          throw new Error(
+            `Veo operation failed: ${data.error.message || "see provider console"}`,
+          );
+        const uri =
+          data.response?.generateVideoResponse?.generatedSamples?.[0]?.video
+            ?.uri;
+        if (
+          !uri ||
+          !uri.startsWith("https://generativelanguage.googleapis.com/")
+        )
+          throw new Error("Veo returned an unexpected video location");
+        return uri;
+      }
+      await this.pause(10000);
+    }
+    throw new Error(
+      "Polling timed out. Resume this task later; do not resubmit.",
+    );
+  }
+  async download(uri, destination) {
+    const response = await this.fetch(uri, {
+      headers: { "x-goog-api-key": this.key },
+      signal: AbortSignal.timeout(300000),
+    });
+    if (!response.ok || !response.body)
+      throw new Error(`Veo download HTTP ${response.status}`);
+    await streamToFile(response, destination);
+  }
+}
+class SelfHosted {
+  constructor(settings, key, fetcher = fetch) {
+    this.settings = settings;
+    this.key = key;
+    this.fetch = fetcher;
+  }
+  async generate(scene, destination) {
+    const base = new URL(this.settings.selfHostedUrl);
+    if (!["http:", "https:"].includes(base.protocol) || base.username || base.password)
+      throw new Error("Invalid self-hosted inference URL");
+    const response = await this.fetch(base.origin + "/generate", {
+      method: "POST",
+      headers: {
+        "X-Inference-Key": this.key,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({ prompt: scene.prompt }),
+      signal: AbortSignal.timeout(1800000),
+    });
+    if (!response.ok || !response.body)
+      throw new Error(`Self-hosted video HTTP ${response.status}`);
+    await streamToFile(response, destination);
+  }
+}
 function validate(project, settings) {
+  const provider = settings.videoProvider || "wan";
+  if (!CLIP_SECONDS[provider] && provider !== "selfHosted")
+    throw new Error("Invalid video provider");
   if (
+    provider === "wan" &&
     !settings.localVideo &&
     (!ENDPOINTS[settings.region] || !/^wan[\w.-]+$/.test(settings.model))
   )
     throw new Error("Invalid Wan region or model");
+  if (provider === "veo" && !/^veo[\w.-]+$/.test(settings.veoModel))
+    throw new Error("Invalid Veo model");
+  if (provider === "selfHosted") {
+    try {
+      const url = new URL(settings.selfHostedUrl);
+      if (!["http:", "https:"].includes(url.protocol))
+        throw new Error();
+    } catch {
+      throw new Error("Invalid self-hosted inference URL");
+    }
+  }
   if (
     !Array.isArray(project.scenes) ||
     !project.scenes.length ||
@@ -143,6 +272,8 @@ function validate(project, settings) {
       scene.prompt.length > 2000
     )
       throw new Error("Each scene needs a prompt of at most 2000 characters");
+    // Only Wan consumes a scene image; Veo and self-hosted generate from the prompt alone.
+    if (provider !== "wan") continue;
     if (scene.localImage || (!scene.image && scene.imagePrompt)) continue;
     let url;
     try {
@@ -153,7 +284,8 @@ function validate(project, settings) {
     if (url.protocol !== "https:" || url.username || url.password)
       throw new Error("Use public HTTPS image URLs");
   }
-  if (settings.localVideo) return 0;
+  if (provider === "selfHosted" || (provider === "wan" && settings.localVideo))
+    return 0;
   const rate = Number(settings.pricePerSecond),
     budget = Number(settings.budget);
   if (
@@ -164,18 +296,16 @@ function validate(project, settings) {
   )
     throw new Error("Enter a positive price per second and budget");
   const estimate =
-    project.scenes.filter((s) => !s.taskId && !s.clip).length * 5 * rate;
+    project.scenes.filter((s) => !s.taskId && !s.clip).length *
+    CLIP_SECONDS[provider] *
+    rate;
   if (Number(project.reserved || 0) + estimate > budget + 1e-8)
     throw new Error(
       "Project budget exceeded. Review reserved spend and pricing.",
     );
   return estimate;
 }
-async function download(url, destination, fetcher = fetch) {
-  if (new URL(url).protocol !== "https:") throw new Error("Unsafe video URL");
-  const response = await fetcher(url, { signal: AbortSignal.timeout(300000) });
-  if (!response.ok || !response.body)
-    throw new Error(`Download HTTP ${response.status}`);
+async function streamToFile(response, destination) {
   const { Readable } = require("node:stream");
   const { pipeline } = require("node:stream/promises");
   const temporary = destination + ".part";
@@ -189,6 +319,13 @@ async function download(url, destination, fetcher = fetch) {
     await fs.rm(temporary, { force: true });
     throw error;
   }
+}
+async function download(url, destination, fetcher = fetch) {
+  if (new URL(url).protocol !== "https:") throw new Error("Unsafe video URL");
+  const response = await fetcher(url, { signal: AbortSignal.timeout(300000) });
+  if (!response.ok || !response.body)
+    throw new Error(`Download HTTP ${response.status}`);
+  await streamToFile(response, destination);
 }
 function run(binary, args) {
   return new Promise((resolve, reject) => {
@@ -266,4 +403,4 @@ async function merge(clips, folder, settings) {
   ]);
   return output;
 }
-module.exports = { Wan, validate, download, merge, run };
+module.exports = { Wan, Veo, SelfHosted, CLIP_SECONDS, validate, download, merge, run };

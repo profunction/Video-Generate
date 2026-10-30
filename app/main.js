@@ -10,7 +10,8 @@ const {
 const fs = require("node:fs/promises");
 const path = require("node:path");
 const crypto = require("node:crypto");
-const { Wan, validate, download, merge, run } = require("./engine");
+const { Wan, Veo, SelfHosted, CLIP_SECONDS, validate, download, merge, run } =
+  require("./engine");
 const {
   storyboard,
   Comfy,
@@ -23,8 +24,11 @@ const { finish } = require("./finish");
 let win,
   busy = false;
 const defaults = {
+  videoProvider: "wan",
   region: "china",
   model: "wan2.2-i2v-flash",
+  veoModel: "veo-3.1-lite-generate-preview",
+  selfHostedUrl: "http://127.0.0.1:8081",
   pricePerSecond: 0,
   budget: 10,
   ffmpeg: "ffmpeg",
@@ -35,6 +39,11 @@ const defaults = {
   localVideo: false,
   narration: false,
   voice: "",
+};
+const SECRET_FILES = {
+  wan: "key.bin",
+  veo: "veo-key.bin",
+  selfHosted: "selfhosted-key.bin",
 };
 const root = () => app.getPath("userData");
 async function read(file, fallback) {
@@ -82,30 +91,36 @@ app.whenReady().then(async () => {
   win.loadFile(path.join(__dirname, "index.html"));
   win.webContents.setWindowOpenHandler(() => ({ action: "deny" }));
   win.webContents.on("will-navigate", (e) => e.preventDefault());
-  ipcMain.handle("settings:get", async () => ({
-    ...(await settings()),
-    hasKey: await fs.access(path.join(root(), "key.bin")).then(
-      () => true,
-      () => false,
-    ),
-  }));
+  ipcMain.handle("settings:get", async () => {
+    const hasSecret = {};
+    for (const [provider, file] of Object.entries(SECRET_FILES))
+      hasSecret[provider] = await fs.access(path.join(root(), file)).then(
+        () => true,
+        () => false,
+      );
+    return { ...(await settings()), hasKey: hasSecret.wan, hasSecret };
+  });
+  async function saveSecret(file, value) {
+    if (
+      !safeStorage.isEncryptionAvailable() ||
+      (process.platform === "linux" &&
+        safeStorage.getSelectedStorageBackend() === "basic_text")
+    )
+      throw Error("Secure credential storage unavailable");
+    await fs.writeFile(
+      path.join(root(), file),
+      safeStorage.encryptString(value),
+      { mode: 0o600 },
+    );
+  }
   ipcMain.handle("settings:save", async (_, value) => {
     if (busy) throw Error("Wait until generation finishes");
     const config = {};
     for (const k of Object.keys(defaults)) config[k] = value[k] ?? defaults[k];
-    if (value.key) {
-      if (
-        !safeStorage.isEncryptionAvailable() ||
-        (process.platform === "linux" &&
-          safeStorage.getSelectedStorageBackend() === "basic_text")
-      )
-        throw Error("Secure credential storage unavailable");
-      await fs.writeFile(
-        path.join(root(), "key.bin"),
-        safeStorage.encryptString(value.key),
-        { mode: 0o600 },
-      );
-    }
+    if (value.key) await saveSecret(SECRET_FILES.wan, value.key);
+    if (value.veoKey) await saveSecret(SECRET_FILES.veo, value.veoKey);
+    if (value.selfHostedKey)
+      await saveSecret(SECRET_FILES.selfHosted, value.selfHostedKey);
     await save(path.join(root(), "settings.json"), config);
     return true;
   });
@@ -252,12 +267,13 @@ app.whenReady().then(async () => {
         p = await read(file, null);
       if (!p) throw Error("Project not found");
       const cfg = await settings();
+      const provider = cfg.videoProvider || "wan";
       const estimate = validate(p, cfg);
       await run(cfg.ffmpeg, ["-version"]);
       await run(cfg.ffprobe, ["-version"]);
-      const needsComfy = p.scenes.some(
-        (s) => !s.taskId && !s.clip && !s.localImage && !s.image,
-      );
+      const needsComfy =
+        provider === "wan" &&
+        p.scenes.some((s) => !s.taskId && !s.clip && !s.localImage && !s.image);
       const workflow = needsComfy
         ? await read(path.join(root(), "workflow.json"), null)
         : null;
@@ -274,23 +290,37 @@ app.whenReady().then(async () => {
       const needsCloud = !cfg.localVideo && p.scenes.some((s) => !s.clip);
       const key = needsCloud
         ? safeStorage.decryptString(
-            await fs.readFile(path.join(root(), "key.bin")),
+            await fs.readFile(path.join(root(), SECRET_FILES[provider])),
           )
         : "";
       const count = p.scenes.filter((s) => !s.taskId && !s.clip).length;
-      if (count && !cfg.localVideo) {
+      const unmetered =
+        provider === "selfHosted" || (provider === "wan" && cfg.localVideo);
+      if (count) {
+        const selfHostedNotice =
+          "Scenes run on your configured self-hosted inference server. This app does not meter or bill GPU time; manage that cost with your GPU provider.";
+        const localVideoNotice =
+          "Scenes run on your local ComfyUI server. This app does not meter or bill GPU time; manage that cost yourself.";
+        const cloudNotice = `Estimated additional cost: ${estimate.toFixed(2)}. Project reserved: ${Number(p.reserved).toFixed(2)}. Budget: ${cfg.budget}. All amounts use the currency of your entered unit price. Estimates are not billing guarantees. Verify current provider pricing.${provider === "wan" ? " Local/generated images will be uploaded to Alibaba temporary storage (48-hour validity)." : ""}`;
         const result = await dialog.showMessageBox(win, {
           type: "warning",
-          buttons: ["Cancel", "Approve paid generation"],
+          buttons: ["Cancel", unmetered ? "Approve generation" : "Approve paid generation"],
           defaultId: 0,
           cancelId: 0,
-          message: `Submit ${count} paid Wan jobs?`,
-          detail: `Estimated additional cost: ${estimate.toFixed(2)}. Project reserved: ${Number(p.reserved).toFixed(2)}. Budget: ${cfg.budget}. Local/generated images will be uploaded to Alibaba temporary storage (48-hour validity). All amounts use the currency of your entered unit price. Estimates are not billing guarantees. Verify current provider pricing.`,
+          message: `Submit ${count} ${{ wan: cfg.localVideo ? "local ComfyUI" : "paid Wan", veo: "paid Veo", selfHosted: "self-hosted" }[provider]} jobs?`,
+          detail: provider === "selfHosted"
+            ? selfHostedNotice
+            : provider === "wan" && cfg.localVideo
+              ? localVideoNotice
+              : cloudNotice,
         });
         if (result.response !== 1) return { canceled: true };
       }
-      const wan = cfg.localVideo ? null : new Wan(cfg, key),
-        folder = path.dirname(file);
+      const wan = provider === "wan" && !cfg.localVideo ? new Wan(cfg, key) : null;
+      const veo = provider === "veo" ? new Veo(cfg, key) : null;
+      const selfHosted = provider === "selfHosted" ? new SelfHosted(cfg, key) : null;
+      const remote = wan || veo;
+      const folder = path.dirname(file);
       for (let i = 0; i < p.scenes.length; i++) {
         const s = p.scenes[i];
         if (s.clip) {
@@ -299,9 +329,21 @@ app.whenReady().then(async () => {
         }
         if (s.uncertain)
           throw Error(
-            `Scene ${i + 1} has an uncertain submission. Check Alibaba console before creating a replacement project.`,
+            `Scene ${i + 1} has an uncertain submission. Check the provider console before creating a replacement project.`,
           );
-        if (!s.localImage && !s.image) {
+        if (provider === "selfHosted") {
+          emit(`Generating scene ${i + 1}/${p.scenes.length} on self-hosted server…`);
+          s.clip = `clip-${i + 1}.mp4`;
+          try {
+            await selfHosted.generate(s, path.join(folder, s.clip));
+          } catch (e) {
+            delete s.clip;
+            throw e;
+          }
+          await save(file, p);
+          continue;
+        }
+        if (provider === "wan" && !s.localImage && !s.image) {
           const comfy = new Comfy(cfg);
           if (!s.comfyId) {
             emit(`ComfyUI: generating scene ${i + 1} image…`);
@@ -313,7 +355,7 @@ app.whenReady().then(async () => {
           s.localImage = target;
           await save(file, p);
         }
-        if (cfg.localVideo) {
+        if (provider === "wan" && cfg.localVideo) {
           const comfy = new Comfy(cfg);
           let source = s.localImage;
           if (!source) {
@@ -344,29 +386,39 @@ app.whenReady().then(async () => {
         }
         if (!s.taskId) {
           let remoteImage = s.image;
-          if (s.localImage) {
+          if (provider === "wan" && s.localImage) {
             emit(`Uploading scene ${i + 1} image…`);
             remoteImage = await wan.upload(s.localImage);
           }
           s.uncertain = true;
-          p.reserved += 5 * Number(cfg.pricePerSecond);
+          p.reserved += CLIP_SECONDS[provider] * Number(cfg.pricePerSecond);
           await save(file, p);
           emit(`Submitting scene ${i + 1}…`);
-          s.taskId = await wan.submit({ ...s, image: remoteImage });
-          s.region = cfg.region;
-          s.model = cfg.model;
+          s.taskId =
+            provider === "wan"
+              ? await wan.submit({ ...s, image: remoteImage })
+              : await veo.submit(s);
+          s.provider = provider;
+          s.region = provider === "wan" ? cfg.region : "";
+          s.model = provider === "wan" ? cfg.model : cfg.veoModel;
           s.uncertain = false;
           await save(file, p);
         }
-        if (s.region !== cfg.region)
-          throw Error("Switch settings back to the region used for this task");
-        const url = await wan.poll(s.taskId, (status) =>
+        if (
+          (s.provider || "wan") !== provider ||
+          (provider === "wan" && s.region !== cfg.region)
+        )
+          throw Error(
+            "Switch settings back to the provider/region used for this task",
+          );
+        const url = await remote.poll(s.taskId, (status) =>
           emit(`Scene ${i + 1}/${p.scenes.length}: ${status}`),
         );
         emit(`Downloading scene ${i + 1}…`);
         s.clip = `clip-${i + 1}.mp4`;
         try {
-          await download(url, path.join(folder, s.clip));
+          if (provider === "wan") await download(url, path.join(folder, s.clip));
+          else await veo.download(url, path.join(folder, s.clip));
         } catch (e) {
           delete s.clip;
           throw e;
