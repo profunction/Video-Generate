@@ -1,0 +1,14 @@
+{
+  "1": {
+    "class_type": "ZhipuVideoGenerate",
+    "inputs": {
+      "api_key": "PASTE_YOUR_ZHIPU_API_KEY_HERE",
+      "prompt": "一只猫在阳光下追逐一个线团",
+      "model": "cogvideox-flash",
+      "size": "1280x960",
+      "fps": 30,
+      "poll_seconds": 300,
+      "image_url": ""
+    }
+  }
+}
