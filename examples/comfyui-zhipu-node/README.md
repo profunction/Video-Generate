@@ -25,16 +25,30 @@ machine with no GPU — the node just makes HTTP calls.
    and saves the finished MP4 into ComfyUI's `output/` folder. Its two
    outputs are the local file path and the remote URL.
 
+## Local image → video
+
+Connect a core **Load Image** node's `IMAGE` output into this node's
+optional `image` input to drive image-to-video from a local file, instead
+of (or in addition to) the `image_url` text box. The node encodes the
+first frame of the batch as a PNG data URI (`data:image/png;base64,...`)
+and shrinks it automatically if it would exceed Zhipu's 5 MB limit for
+`image_url`. If both `image` and `image_url` are set, `image` wins; if
+neither is set, it's plain text-to-video.
+
 ## Notes
 
-- `image_url` is optional: leave it empty for text-to-video, or set it to
-  a public HTTPS image URL for image-to-video.
+- `image_url` (text) is optional: leave it empty for text-to-video, set it
+  to a public HTTPS image URL, or use the `image` input above instead.
 - The API key is typed directly into the node widget and stays only in
   your local `workflow.json` / ComfyUI's saved graph — it is not sent
   anywhere but to `open.bigmodel.cn`. Don't share a workflow file with
   your key filled in.
 - A `1305` error from Zhipu ("该模型当前访问量过大") means the free model
-  is temporarily overloaded — requeue the prompt after a short wait.
+  is temporarily overloaded — requeue the prompt after a short wait. A
+  `1211` error ("模型不存在") usually means the key was created on Z.ai
+  instead of bigmodel.cn, or the model isn't enabled for that account —
+  check it in bigmodel.cn's playground. A `401` means the key itself is
+  invalid or mistyped.
 - This node only talks to Zhipu's API; it is unrelated to the Video
   Generate desktop app's own ComfyUI integration (which drives *local*
   GPU workflows for image/video generation).
